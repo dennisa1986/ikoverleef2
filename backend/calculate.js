@@ -312,6 +312,9 @@ function derivedLineRole(line) {
       'gascartouche',
       'ontsteking',
       'kookvat',
+      'sanitair-absorptiemiddel',
+      'zipbags',
+      'nitril-handschoenen',
     ].includes(line.product_type_slug)
   ) {
     return 'accessory';
@@ -392,6 +395,33 @@ function publicExplanationForLine(line) {
     case 'IOE-COOK-POT-BASIC':
     case 'IOE-COOK-SET-PLUS':
       return 'Dit kookvat is toegevoegd als verplicht accessoire bij de ondersteunende kookoplossing.';
+    case 'IOE-HANDGEL-BASIC':
+    case 'IOE-HANDGEL-PLUS':
+      return 'Deze handgel is toegevoegd voor praktische handhygiene volgens productinstructie. Dit is geen medische bescherming of volledige infectiepreventie.';
+    case 'IOE-HYGIENE-WIPES-BASIC':
+    case 'IOE-HYGIENE-WIPES-PLUS':
+      return 'Deze hygienedoekjes zijn toegevoegd voor basale reiniging. Ze reinigen praktisch, maar steriliseren niet.';
+    case 'IOE-SOAP-BASIC':
+    case 'IOE-SOAP-PLUS':
+      return 'Deze basiszeep ondersteunt handreiniging en basishygiene.';
+    case 'IOE-TOILET-BAGS-BASIC':
+    case 'IOE-TOILET-BAGS-PLUS':
+      return 'Deze noodtoiletzakken zijn toegevoegd om toiletafval tijdelijk in te sluiten. Gebruik ze volgens instructie en met de getoonde waarschuwingen.';
+    case 'IOE-ABSORBENT-BASIC':
+    case 'IOE-ABSORBENT-PLUS':
+      return 'Dit absorptiemiddel is toegevoegd als ondersteunend accessoire bij noodsanitatie. Het maakt afval niet veilig om zonder bescherming te hanteren.';
+    case 'IOE-TOILET-PAPER-BASIC':
+    case 'IOE-TOILET-PAPER-PLUS':
+      return 'Dit toiletpapier is toegevoegd als praktisch verbruiksartikel bij de noodsanitatie-oplossing.';
+    case 'IOE-WASTE-BAGS-BASIC':
+    case 'IOE-WASTE-BAGS-PLUS':
+      return 'Deze vuilniszakken zijn toegevoegd voor tijdelijke afvalcontainment van huishoudelijk afval. Ze zijn niet bedoeld voor gevaarlijk, chemisch of medisch afval.';
+    case 'IOE-ZIPBAGS-BASIC':
+    case 'IOE-ZIPBAGS-PLUS':
+      return 'Deze zipbags ondersteunen het apart afsluitbaar bewaren van klein of geurend huishoudelijk afval.';
+    case 'IOE-GLOVES-NITRILE-BASIC':
+    case 'IOE-GLOVES-NITRILE-PLUS':
+      return 'Deze nitril handschoenen zijn toegevoegd voor handling bij sanitatie en afval. Ze zijn niet steriel en geen medische bescherming.';
     default:
       if (line.is_accessory) {
         const parents = parentTitles(line);
@@ -433,6 +463,12 @@ function internalExplanationForLine(line, selectionScore) {
   }
   if (['IOE-FOOD-PACK-1PD-BASIC', 'IOE-FOOD-PACK-1PD-PLUS'].includes(line.sku)) {
     parts.push('governance=core food coverage blijft no-cook en zonder koeling');
+  }
+  if (['IOE-HANDGEL-BASIC', 'IOE-HANDGEL-PLUS', 'IOE-HYGIENE-WIPES-BASIC', 'IOE-HYGIENE-WIPES-PLUS', 'IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku)) {
+    parts.push('governance=hygiene items maken geen medische of volledige infectiepreventieclaim');
+  }
+  if (['IOE-TOILET-BAGS-BASIC', 'IOE-TOILET-BAGS-PLUS', 'IOE-ABSORBENT-BASIC', 'IOE-ABSORBENT-PLUS', 'IOE-WASTE-BAGS-BASIC', 'IOE-WASTE-BAGS-PLUS', 'IOE-ZIPBAGS-BASIC', 'IOE-ZIPBAGS-PLUS'].includes(line.sku)) {
+    parts.push('governance=sanitatie/afval is containment/supporting; geen gevaarlijk, chemisch of medisch afval claim');
   }
 
   return parts.join('; ');

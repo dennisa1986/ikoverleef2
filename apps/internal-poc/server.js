@@ -19,7 +19,7 @@ const DEFAULT_POC_INPUT = {
 };
 
 function inputForSelection(tierSlug, addonSlug) {
-  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding'].includes(addonSlug)
+  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval'].includes(addonSlug)
     ? addonSlug
     : 'stroomuitval';
   return {
@@ -86,6 +86,7 @@ function fmtBool(value) {
 function roleLabel(line) {
   if (line.is_accessory) return 'accessory';
   if (line.product_type_slug === 'buitenkooktoestel-gas' || line.primary_reason === 'voedsel-verwarmen-ondersteunend') return 'supporting';
+  if (['sanitair-absorptiemiddel', 'zipbags', 'nitril-handschoenen'].includes(line.product_type_slug)) return 'accessory';
   if (!line.is_core_line) return 'backup';
   return 'core';
 }
@@ -447,6 +448,7 @@ function renderPage(data) {
         <a class="pill ${currentAddon === 'stroomuitval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=stroomuitval&tier=${escapeHtml(data.input.tier_slug)}">Stroomuitval</a>
         <a class="pill ${currentAddon === 'drinkwater' ? 'good' : ''}" href="/internal/recommendation-poc?addon=drinkwater&tier=${escapeHtml(data.input.tier_slug)}">Drinkwater</a>
         <a class="pill ${currentAddon === 'voedsel_bereiding' ? 'good' : ''}" href="/internal/recommendation-poc?addon=voedsel_bereiding&tier=${escapeHtml(data.input.tier_slug)}">Voedsel</a>
+        <a class="pill ${currentAddon === 'hygiene_sanitatie_afval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=hygiene_sanitatie_afval&tier=${escapeHtml(data.input.tier_slug)}">Hygiene</a>
         <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
       </div>
       <div style="margin-bottom:14px">
@@ -510,11 +512,15 @@ function renderPage(data) {
         const lineUsage = usageByLine.get(line.id) || [];
         const isRadio = line.sku === 'IOE-RADIO-AAUSB-PLUS';
         const isFoodPrep = ['IOE-COOKER-OUTDOOR-GAS-BASIC', 'IOE-COOKER-OUTDOOR-GAS-PLUS', 'IOE-FUEL-GAS-230G-BASIC', 'IOE-FUEL-GAS-230G-PLUS'].includes(line.sku);
+        const isHygieneGoverned = ['IOE-HANDGEL-BASIC', 'IOE-HANDGEL-PLUS', 'IOE-HYGIENE-WIPES-BASIC', 'IOE-HYGIENE-WIPES-PLUS', 'IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku);
+        const isSanitationGoverned = ['IOE-TOILET-BAGS-BASIC', 'IOE-TOILET-BAGS-PLUS', 'IOE-ABSORBENT-BASIC', 'IOE-ABSORBENT-PLUS', 'IOE-WASTE-BAGS-BASIC', 'IOE-WASTE-BAGS-PLUS', 'IOE-ZIPBAGS-BASIC', 'IOE-ZIPBAGS-PLUS'].includes(line.sku);
         return `
           <details>
             <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span> <span class="pill ${roleLabel(line) === 'core' ? 'good' : 'backup'}">${escapeHtml(roleLabel(line))}</span></summary>
             ${isRadio ? `<div class="governance">Laad- en lampfuncties tellen alleen als backup en vervangen geen powerbank, hoofdlamp of lantaarn.</div>` : ''}
             ${isFoodPrep ? `<div class="governance">Voedselbereiding is ondersteunend. Gas, brandstof en open vuur worden niet als primary voedseldekking geteld.</div>` : ''}
+            ${isHygieneGoverned ? `<div class="governance">Hygiene-items claimen geen medische bescherming, steriliteit of volledige infectiepreventie.</div>` : ''}
+            ${isSanitationGoverned ? `<div class="governance">Sanitatie- en afvalitems zijn bedoeld voor tijdelijke containment en niet voor gevaarlijk, chemisch of medisch afval.</div>` : ''}
             <h3 style="margin-top:12px">Sources</h3>
             <table>
               <thead><tr><th>source_type</th><th>scenario_need</th><th>parent item</th><th>explanation</th></tr></thead>
@@ -589,7 +595,7 @@ async function handleRequest(req, res) {
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
     const addonParam = url.searchParams.get('addon');
-    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding'].includes(addonParam) ? addonParam : 'stroomuitval';
+    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval'].includes(addonParam) ? addonParam : 'stroomuitval';
     const data = await loadRecommendationData(inputForSelection(tier, addon));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));
