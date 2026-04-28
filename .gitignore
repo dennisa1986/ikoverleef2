@@ -1,0 +1,12 @@
+.env
+.env.local
+directus/.env
+apps/*/.env
+backend/.env
+node_modules/
+*/node_modules/
+uploads/
+directus/uploads/
+logs/
+*.log
+.DS_Store

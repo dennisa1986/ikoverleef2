@@ -1,0 +1,13 @@
+{
+  "name": "ikoverleef-engine",
+  "version": "0.0.1",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "calc": "node calculate.js",
+    "test:stroomuitval-poc": "node regression_stroomuitval_poc.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
