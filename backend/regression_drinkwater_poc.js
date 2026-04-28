@@ -7,29 +7,28 @@ const ROOT = path.resolve(__dirname, '..');
 const ENV_PATH = path.join(ROOT, '.env.local');
 
 const EXPECTED = {
-  basis: [
-    'IOE-PB-10K-BASIC',
-    'IOE-HEADLAMP-AAA-BASIC',
-    'IOE-LANTERN-AA-BASIC',
-    'IOE-RADIO-AA-BASIC',
-    'IOE-CABLE-USBC-BASIC',
-    'IOE-BATT-AAA-12-BASIC',
-    'IOE-BATT-AA-12-BASIC',
-  ],
-  basis_plus: [
-    'IOE-PB-20K-PLUS',
-    'IOE-HEADLAMP-AAA-PLUS',
-    'IOE-LANTERN-AA-PLUS',
-    'IOE-RADIO-AAUSB-PLUS',
-    'IOE-CABLE-USBC-SET',
-    'IOE-BATT-AAA-12',
-    'IOE-BATT-AA-12',
-  ],
-};
-
-const AA_SKU = {
-  basis: 'IOE-BATT-AA-12-BASIC',
-  basis_plus: 'IOE-BATT-AA-12',
+  basis: {
+    skus: [
+      'IOE-WATER-PACK-6L-BASIC',
+      'IOE-JERRYCAN-10L-BASIC',
+      'IOE-WATERFILTER-BASIC',
+      'IOE-WATER-TABS-BASIC',
+    ],
+    waterPack: 'IOE-WATER-PACK-6L-BASIC',
+    jerrycan: 'IOE-JERRYCAN-10L-BASIC',
+    forbidden: ['IOE-WATER-PACK-6L-PLUS', 'IOE-JERRYCAN-20L-PLUS', 'IOE-WATERFILTER-PLUS', 'IOE-WATER-TABS-PLUS'],
+  },
+  basis_plus: {
+    skus: [
+      'IOE-WATER-PACK-6L-PLUS',
+      'IOE-JERRYCAN-20L-PLUS',
+      'IOE-WATERFILTER-PLUS',
+      'IOE-WATER-TABS-PLUS',
+    ],
+    waterPack: 'IOE-WATER-PACK-6L-PLUS',
+    jerrycan: 'IOE-JERRYCAN-20L-PLUS',
+    forbidden: ['IOE-WATER-PACK-6L-BASIC', 'IOE-JERRYCAN-10L-BASIC', 'IOE-WATERFILTER-BASIC', 'IOE-WATER-TABS-BASIC'],
+  },
 };
 
 const BLOCKING_QA_VIEWS = [
@@ -64,7 +63,7 @@ function fail(message) {
 }
 
 function assertEqual(actual, expected, label) {
-  if (actual !== expected) {
+  if (Number(actual) !== Number(expected)) {
     fail(`${label}: expected ${expected}, got ${actual}`);
   }
 }
@@ -94,6 +93,11 @@ async function runEngine(tierSlug) {
       {
         ...DEFAULT_INPUT,
         tier_slug: tierSlug,
+        addon_slugs: ['drinkwater'],
+        duration_hours: 72,
+        household_adults: 2,
+        household_children: 0,
+        household_pets: 0,
       },
       { throwOnError: true },
     );
@@ -119,20 +123,20 @@ async function latestRun(client, tierSlug) {
          FROM recommendation_run_addon rra
          JOIN addon a ON a.id = rra.addon_id
          WHERE rra.recommendation_run_id = rr.id
-           AND a.slug = 'stroomuitval'
+           AND a.slug = 'drinkwater'
        )
      ORDER BY rr.created_at DESC
      LIMIT 1`,
     [tierSlug],
   );
 
-  if (!result.rows.length) fail(`no recommendation_run found for tier ${tierSlug}`);
+  if (!result.rows.length) fail(`no drinkwater recommendation_run found for tier ${tierSlug}`);
   return result.rows[0].id;
 }
 
 async function generatedLines(client, runId) {
   const result = await client.query(
-    `SELECT gpl.id, i.sku
+    `SELECT gpl.id, i.sku, gpl.quantity
      FROM generated_package_line gpl
      JOIN item i ON i.id = gpl.item_id
      WHERE gpl.recommendation_run_id = $1
@@ -147,33 +151,52 @@ async function countView(client, viewName) {
   return result.rows[0].records;
 }
 
+async function coverageRow(client, runId, sku, capability) {
+  const result = await client.query(
+    `SELECT glc.coverage_strength, glc.counted_as_sufficient
+     FROM generated_line_coverage glc
+     JOIN generated_package_line gpl ON gpl.id = glc.generated_package_line_id
+     JOIN item i ON i.id = gpl.item_id
+     JOIN capability c ON c.id = glc.capability_id
+     WHERE gpl.recommendation_run_id = $1
+       AND i.sku = $2
+       AND c.slug = $3
+     LIMIT 1`,
+    [runId, sku, capability],
+  );
+  return result.rows[0] || null;
+}
+
+async function assertNoCoverage(client, runId, sku, capability, label) {
+  const row = await coverageRow(client, runId, sku, capability);
+  if (row) fail(`${label}: unexpected coverage for ${sku} / ${capability}`);
+}
+
 async function checkTier(client, tierSlug) {
+  const expected = EXPECTED[tierSlug];
   const runId = await latestRun(client, tierSlug);
   const lines = await generatedLines(client, runId);
   const skus = lines.map((line) => line.sku);
 
-  assertSameSet(skus, EXPECTED[tierSlug], `${tierSlug} generated SKUs`);
-
-  if (tierSlug === 'basis') {
-    if (!skus.includes('IOE-PB-10K-BASIC')) fail('Basis does not include IOE-PB-10K-BASIC');
-    if (skus.includes('IOE-PB-20K-PLUS')) fail('Basis unexpectedly includes IOE-PB-20K-PLUS');
+  assertSameSet(skus, expected.skus, `${tierSlug} drinkwater generated SKUs`);
+  for (const forbiddenSku of expected.forbidden) {
+    if (skus.includes(forbiddenSku)) fail(`${tierSlug} unexpectedly includes ${forbiddenSku}`);
   }
 
-  if (tierSlug === 'basis_plus') {
-    if (!skus.includes('IOE-PB-20K-PLUS')) fail('Basis+ does not include IOE-PB-20K-PLUS');
-    if (skus.includes('IOE-PB-10K-BASIC')) fail('Basis+ unexpectedly includes IOE-PB-10K-BASIC');
-  }
+  const bySku = new Map(lines.map((line) => [line.sku, line]));
+  assertEqual(bySku.get(expected.waterPack)?.quantity, 3, `${tierSlug} waterpack quantity`);
+  assertEqual(bySku.get(expected.jerrycan)?.quantity, 1, `${tierSlug} jerrycan quantity`);
 
-  const aaLines = lines.filter((line) => line.sku === AA_SKU[tierSlug]);
-  assertEqual(aaLines.length, 1, `${tierSlug} AA battery line count`);
+  const waterPackCoverage = await coverageRow(client, runId, expected.waterPack, 'drinkwater-voorraad-houden');
+  if (!waterPackCoverage?.counted_as_sufficient) fail(`${tierSlug} waterpack is not sufficient for drinkwater-voorraad-houden`);
 
-  const sources = await client.query(
-    `SELECT count(*)::int AS records
-     FROM generated_line_source
-     WHERE generated_package_line_id = $1`,
-    [aaLines[0].id],
-  );
-  assertEqual(sources.rows[0].records, 2, `${tierSlug} AA battery source count`);
+  const jerrycanCoverage = await coverageRow(client, runId, expected.jerrycan, 'drinkwater-opslaan');
+  if (!jerrycanCoverage?.counted_as_sufficient) fail(`${tierSlug} jerrycan is not sufficient for drinkwater-opslaan`);
+
+  const filterSku = tierSlug === 'basis' ? 'IOE-WATERFILTER-BASIC' : 'IOE-WATERFILTER-PLUS';
+  const tabsSku = tierSlug === 'basis' ? 'IOE-WATER-TABS-BASIC' : 'IOE-WATER-TABS-PLUS';
+  await assertNoCoverage(client, runId, filterSku, 'drinkwater-opslaan', `${tierSlug} filter replacement check`);
+  await assertNoCoverage(client, runId, tabsSku, 'drinkwater-voorraad-houden', `${tierSlug} tablets replacement check`);
 
   return { tierSlug, runId, skus };
 }
@@ -200,7 +223,7 @@ async function main() {
     }
     assertEqual(blockingTotal, 0, 'blocking QA total');
 
-    console.log('Stroomuitval POC regression baseline OK');
+    console.log('Drinkwater POC regression baseline OK');
     console.log(`Basis run: ${basis.runId}`);
     console.log(`Basis SKUs: ${basis.skus.join(', ')}`);
     console.log(`Basis+ run: ${basisPlus.runId}`);

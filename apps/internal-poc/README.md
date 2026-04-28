@@ -1,13 +1,13 @@
 # Interne recommendation POC
 
-Interne, niet-klantgerichte webapp-pagina voor de bestaande Stroomuitval recommendation output.
+Interne, niet-klantgerichte webapp-pagina voor bestaande recommendation output.
 
 ## Scope
 
 Deze app:
 
 ```text
-- leest de laatste generated recommendation_run voor de bestaande Stroomuitval POC-input;
+- leest de laatste generated recommendation_run voor de bestaande Stroomuitval- of Drinkwater-POC-input;
 - toont pakketregels, sources, coverage en QA-counts;
 - gebruikt ioe_app via IOE_PG_URL;
 - bouwt geen checkout, klantaccount, betaalflow of nieuwe content.
@@ -35,6 +35,15 @@ http://127.0.0.1:4173/internal/recommendation-poc?tier=basis
 http://127.0.0.1:4173/internal/recommendation-poc?tier=basis_plus
 ```
 
+Add-onkeuze:
+
+```text
+http://127.0.0.1:4173/internal/recommendation-poc?addon=stroomuitval&tier=basis
+http://127.0.0.1:4173/internal/recommendation-poc?addon=stroomuitval&tier=basis_plus
+http://127.0.0.1:4173/internal/recommendation-poc?addon=drinkwater&tier=basis
+http://127.0.0.1:4173/internal/recommendation-poc?addon=drinkwater&tier=basis_plus
+```
+
 Andere poort:
 
 ```powershell
@@ -52,7 +61,7 @@ Gebruikte input:
 {
   "package_slug": "basispakket",
   "tier_slug": "basis of basis_plus",
-  "addon_slugs": ["stroomuitval"],
+  "addon_slugs": ["stroomuitval"] or ["drinkwater"],
   "duration_hours": 72,
   "household_adults": 2,
   "household_children": 0,

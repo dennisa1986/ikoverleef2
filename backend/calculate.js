@@ -64,7 +64,7 @@ function applyRounding(rule, value, packSize) {
     case 'minimum_one': return Math.max(1, Math.ceil(value));
     case 'pack_size': {
       const ps = Number(packSize || 1);
-      return Math.ceil(value / ps) * ps;
+      return Math.ceil(value / ps);
     }
     case 'none':
     default: return value;
@@ -89,11 +89,11 @@ function computeQuantity(policy, input) {
     case 'per_adult': raw = base + af * adults; break;
     case 'per_child': raw = base + cf * children; break;
     case 'per_pet': raw = base + pf * pets; break;
-    case 'per_person': raw = base + af * (adults + children); break;
+    case 'per_person': raw = base + af * adults + cf * children; break;
     case 'per_household': raw = base; break;
     case 'per_adult_per_day': raw = base + af * adults * df * days; break;
     case 'per_child_per_day': raw = base + cf * children * df * days; break;
-    case 'per_person_per_day': raw = base + af * (adults + children) * df * days; break;
+    case 'per_person_per_day': raw = base + (af * adults + cf * children) * (df || 1) * days; break;
     case 'per_device':
     case 'per_selected_parent_item':
     case 'pack_size_rounding':
@@ -326,6 +326,23 @@ function publicExplanationForLine(line) {
     case 'IOE-FLASHLIGHT-AA-BASIC':
     case 'IOE-FLASHLIGHT-AA-PLUS':
       return 'Een zaklamp kan handig zijn als extra gerichte lichtbron, maar vervangt geen hoofdlamp of lantaarn.';
+    case 'IOE-WATER-PACK-6L-BASIC':
+    case 'IOE-WATER-PACK-6L-PLUS':
+      return 'Deze drinkwatervoorraad is toegevoegd zodat je direct drinkbaar water beschikbaar hebt voor de gekozen duur en huishoudgrootte.';
+    case 'IOE-JERRYCAN-10L-BASIC':
+    case 'IOE-JERRYCAN-20L-PLUS':
+      return 'Deze waterjerrycan is toegevoegd om thuis extra drinkwater veilig te kunnen opslaan. Een filter of tablet vervangt deze opslag niet.';
+    case 'IOE-WATERFILTER-BASIC':
+    case 'IOE-WATERFILTER-PLUS':
+      return 'Dit waterfilter is toegevoegd als backup voor waterbehandeling volgens productspecificatie. Het vervangt geen voldoende drinkwatervoorraad.';
+    case 'IOE-WATER-TABS-BASIC':
+    case 'IOE-WATER-TABS-PLUS':
+      return 'Deze waterzuiveringstabletten zijn een backupmethode voor waterbehandeling volgens instructie. Ze zijn geen universele oplossing voor elk water.';
+    case 'IOE-BOTTLE-1L-BASIC':
+    case 'IOE-BOTTLE-1L-PLUS':
+      return 'Deze drinkfles is toegevoegd zodat je bij verplaatsing drinkwater praktisch kunt meenemen.';
+    case 'IOE-FILTERBOTTLE-PLUS':
+      return 'Deze filterfles combineert water meenemen met een filterfunctie volgens productspecificatie. De filterfunctie is ondersteunend en vervangt geen basisvoorraad.';
     default:
       if (line.is_accessory) {
         const parents = parentTitles(line);
@@ -356,6 +373,9 @@ function internalExplanationForLine(line, selectionScore) {
   if (parents.length) parts.push(`parent_items=${parents.join(',')}`);
   if (line.sku === 'IOE-RADIO-AAUSB-PLUS') {
     parts.push('governance=telefoonladen en orientatielicht zijn backup/weak coverage, niet primary sufficient');
+  }
+  if (['IOE-WATERFILTER-BASIC', 'IOE-WATERFILTER-PLUS', 'IOE-WATER-TABS-BASIC', 'IOE-WATER-TABS-PLUS', 'IOE-FILTERBOTTLE-PLUS'].includes(line.sku)) {
+    parts.push('governance=waterbehandeling is backup/supporting en vervangt geen drinkwatervoorraad of thuisopslag');
   }
 
   return parts.join('; ');

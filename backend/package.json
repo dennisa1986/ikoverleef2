@@ -5,7 +5,8 @@
   "type": "commonjs",
   "scripts": {
     "calc": "node calculate.js",
-    "test:stroomuitval-poc": "node regression_stroomuitval_poc.js"
+    "test:stroomuitval-poc": "node regression_stroomuitval_poc.js",
+    "test:drinkwater-poc": "node regression_drinkwater_poc.js"
   },
   "dependencies": {
     "pg": "^8.13.0"

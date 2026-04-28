@@ -18,10 +18,13 @@ const DEFAULT_POC_INPUT = {
   household_pets: 0,
 };
 
-function inputForTier(tierSlug) {
+function inputForSelection(tierSlug, addonSlug) {
+  const normalizedAddon = addonSlug === 'drinkwater' ? 'drinkwater' : 'stroomuitval';
   return {
     ...DEFAULT_POC_INPUT,
     tier_slug: tierSlug === 'basis' ? 'basis' : 'basis_plus',
+    addon_slugs: [normalizedAddon],
+    duration_hours: 72,
   };
 }
 
@@ -113,6 +116,13 @@ async function loadRecommendationData(input) {
           AND rr.household_adults = $4
           AND rr.household_children = $5
           AND rr.household_pets = $6
+          AND EXISTS (
+            SELECT 1
+            FROM recommendation_run_addon rra_filter
+            JOIN addon a_filter ON a_filter.id = rra_filter.addon_id
+            WHERE rra_filter.recommendation_run_id = rr.id
+              AND a_filter.slug = ANY($7)
+          )
         GROUP BY rr.id, p.id, t.id
         ORDER BY rr.created_at DESC
         LIMIT 1`,
@@ -123,11 +133,12 @@ async function loadRecommendationData(input) {
         input.household_adults,
         input.household_children,
         input.household_pets,
+        input.addon_slugs,
       ],
     );
 
     if (!run.rows.length) {
-      throw new Error(`Geen generated recommendation_run gevonden voor tier=${input.tier_slug}. Draai eerst de recommendation engine voor deze tier.`);
+      throw new Error(`Geen generated recommendation_run gevonden voor tier=${input.tier_slug}, addon=${input.addon_slugs.join(',')}. Draai eerst de recommendation engine voor deze input.`);
     }
 
     const runId = run.rows[0].id;
@@ -253,6 +264,7 @@ function renderPage(data) {
   const blockingTotal = data.blockingQa.reduce((sum, row) => sum + row.records, 0);
   const warningTotal = data.warningQa.reduce((sum, row) => sum + row.records, 0);
   const qaStatus = blockingTotal === 0 && warningTotal === 0 ? 'clean' : 'attention';
+  const currentAddon = data.input.addon_slugs[0] || 'stroomuitval';
 
   return `<!doctype html>
 <html lang="nl">
@@ -400,7 +412,7 @@ function renderPage(data) {
 <body>
   <header>
     <h1>Interne recommendation POC</h1>
-    <div class="subtle">Alle data komt uit de bestaande Stroomuitval POC database-output. Geen checkout, account of betaalflow.</div>
+    <div class="subtle">Alle data komt uit bestaande generated recommendation output. Geen checkout, account of betaalflow.</div>
   </header>
   <main>
     <section class="band">
@@ -409,9 +421,14 @@ function renderPage(data) {
         <span class="status ${qaStatus === 'clean' ? 'ok' : 'warn'}">QA ${escapeHtml(qaStatus)}</span>
       </div>
       <div style="margin-bottom:14px">
-        <a class="pill ${data.input.tier_slug === 'basis' ? 'good' : ''}" href="/internal/recommendation-poc?tier=basis">Basis</a>
-        <a class="pill ${data.input.tier_slug === 'basis_plus' ? 'good' : ''}" href="/internal/recommendation-poc?tier=basis_plus">Basis+</a>
-        <span class="subtle" style="margin-left:8px">Interne tierkeuze voor dezelfde Stroomuitval POC-input.</span>
+        <a class="pill ${currentAddon === 'stroomuitval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=stroomuitval&tier=${escapeHtml(data.input.tier_slug)}">Stroomuitval</a>
+        <a class="pill ${currentAddon === 'drinkwater' ? 'good' : ''}" href="/internal/recommendation-poc?addon=drinkwater&tier=${escapeHtml(data.input.tier_slug)}">Drinkwater</a>
+        <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
+      </div>
+      <div style="margin-bottom:14px">
+        <a class="pill ${data.input.tier_slug === 'basis' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis">Basis</a>
+        <a class="pill ${data.input.tier_slug === 'basis_plus' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis_plus">Basis+</a>
+        <span class="subtle" style="margin-left:8px">Tierkeuze voor dezelfde interne POC-input.</span>
       </div>
       <div class="summary-grid">
         <div><span>recommendation_run_id</span><strong>${escapeHtml(data.run.id)}</strong></div>
@@ -530,7 +547,8 @@ async function handleRequest(req, res) {
     }
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
-    const data = await loadRecommendationData(inputForTier(tier));
+    const addon = url.searchParams.get('addon') === 'drinkwater' ? 'drinkwater' : 'stroomuitval';
+    const data = await loadRecommendationData(inputForSelection(tier, addon));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));
   } catch (error) {
