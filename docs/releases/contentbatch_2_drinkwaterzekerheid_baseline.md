@@ -104,5 +104,5 @@ Baseline vereist en gevalideerd:
 
 ## Git
 
-Commit en tag zijn nog niet gezet in deze implementatiestap.
-Tagvoorstel: `v0.2.0-drinkwater-baseline`.
+Git commit: `98e882c3d7109aa6ee2e800ba0869cab8ed492fd`
+Git tag: `v0.2.0-drinkwater-baseline`
