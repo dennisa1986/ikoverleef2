@@ -315,6 +315,7 @@ function derivedLineRole(line) {
       'sanitair-absorptiemiddel',
       'zipbags',
       'nitril-handschoenen',
+      'verbandtape',
     ].includes(line.product_type_slug)
   ) {
     return 'accessory';
@@ -322,7 +323,9 @@ function derivedLineRole(line) {
 
   if (
     needs.has('voedsel-verwarmen-ondersteunend') ||
-    line.product_type_slug === 'buitenkooktoestel-gas'
+    line.product_type_slug === 'buitenkooktoestel-gas' ||
+    needs.has('temperatuur-controleren') ||
+    line.product_type_slug === 'thermometer'
   ) {
     return 'supporting';
   }
@@ -421,7 +424,27 @@ function publicExplanationForLine(line) {
       return 'Deze zipbags ondersteunen het apart afsluitbaar bewaren van klein of geurend huishoudelijk afval.';
     case 'IOE-GLOVES-NITRILE-BASIC':
     case 'IOE-GLOVES-NITRILE-PLUS':
+      if (sourceNeeds(line).some(need => ['zorg-handbescherming', 'basis-ehbo', 'wondreiniging-ondersteunen'].includes(need))) {
+        return 'Deze nitril handschoenen zijn toegevoegd voor handling bij wondzorg. Ze zijn niet steriel en geen medische bescherming.';
+      }
       return 'Deze nitril handschoenen zijn toegevoegd voor handling bij sanitatie en afval. Ze zijn niet steriel en geen medische bescherming.';
+    case 'IOE-FIRSTAID-KIT-BASIC':
+    case 'IOE-FIRSTAID-KIT-PLUS':
+      return 'Deze EHBO-set is toegevoegd voor kleine incidenten. De set vervangt geen arts, professionele hulp of noodhulp.';
+    case 'IOE-PLASTERS-BASIC':
+    case 'IOE-PLASTERS-PLUS':
+      return 'Deze pleisters zijn toegevoegd voor kleine wondafdekking. Ze zijn niet bedoeld voor ernstige verwondingen.';
+    case 'IOE-STERILE-GAUZE-BASIC':
+    case 'IOE-STERILE-GAUZE-PLUS':
+      return 'Dit steriele gaas ondersteunt wondafdekking, maar garandeert geen infectiepreventie.';
+    case 'IOE-WOUND-CLEANING-BASIC':
+    case 'IOE-WOUND-CLEANING-PLUS':
+      return 'Deze wondreiniging ondersteunt reinigen volgens productinstructie. Het behandelt of voorkomt geen infectie.';
+    case 'IOE-MEDICAL-TAPE-BASIC':
+    case 'IOE-MEDICAL-TAPE-PLUS':
+      return 'Deze verbandtape is toegevoegd om gaas of verband te fixeren. Tape behandelt geen wond.';
+    case 'IOE-THERMOMETER-PLUS':
+      return 'Deze thermometer is toegevoegd als ondersteunend middel om temperatuur te meten. Hij stelt geen diagnose en geeft geen behandeladvies.';
     default:
       if (line.is_accessory) {
         const parents = parentTitles(line);
@@ -469,6 +492,12 @@ function internalExplanationForLine(line, selectionScore) {
   }
   if (['IOE-TOILET-BAGS-BASIC', 'IOE-TOILET-BAGS-PLUS', 'IOE-ABSORBENT-BASIC', 'IOE-ABSORBENT-PLUS', 'IOE-WASTE-BAGS-BASIC', 'IOE-WASTE-BAGS-PLUS', 'IOE-ZIPBAGS-BASIC', 'IOE-ZIPBAGS-PLUS'].includes(line.sku)) {
     parts.push('governance=sanitatie/afval is containment/supporting; geen gevaarlijk, chemisch of medisch afval claim');
+  }
+  if (['IOE-FIRSTAID-KIT-BASIC', 'IOE-FIRSTAID-KIT-PLUS', 'IOE-PLASTERS-BASIC', 'IOE-PLASTERS-PLUS', 'IOE-STERILE-GAUZE-BASIC', 'IOE-STERILE-GAUZE-PLUS', 'IOE-WOUND-CLEANING-BASIC', 'IOE-WOUND-CLEANING-PLUS', 'IOE-MEDICAL-TAPE-BASIC', 'IOE-MEDICAL-TAPE-PLUS', 'IOE-THERMOMETER-PLUS'].includes(line.sku)) {
+    parts.push('governance=EHBO/persoonlijke zorg is ondersteunend; geen diagnose, behandeling of artsvervangende claim');
+  }
+  if (['IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku) && needs.some(need => ['zorg-handbescherming', 'basis-ehbo', 'wondreiniging-ondersteunen'].includes(need))) {
+    parts.push('governance=handschoenen hergebruikt voor wondzorghandling; geen steriele medische bescherming');
   }
 
   return parts.join('; ');

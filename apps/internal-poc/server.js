@@ -19,7 +19,7 @@ const DEFAULT_POC_INPUT = {
 };
 
 function inputForSelection(tierSlug, addonSlug) {
-  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval'].includes(addonSlug)
+  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg'].includes(addonSlug)
     ? addonSlug
     : 'stroomuitval';
   return {
@@ -87,6 +87,8 @@ function roleLabel(line) {
   if (line.is_accessory) return 'accessory';
   if (line.product_type_slug === 'buitenkooktoestel-gas' || line.primary_reason === 'voedsel-verwarmen-ondersteunend') return 'supporting';
   if (['sanitair-absorptiemiddel', 'zipbags', 'nitril-handschoenen'].includes(line.product_type_slug)) return 'accessory';
+  if (line.product_type_slug === 'verbandtape') return 'accessory';
+  if (line.product_type_slug === 'thermometer' || line.primary_reason === 'temperatuur-controleren') return 'supporting';
   if (!line.is_core_line) return 'backup';
   return 'core';
 }
@@ -179,6 +181,33 @@ async function loadRecommendationData(input) {
       [runId],
     );
 
+    const tasks = await client.query(
+      `WITH run_context AS (
+          SELECT rr.id, rr.package_id
+          FROM recommendation_run rr
+          WHERE rr.id = $1
+        ),
+        active_scenarios AS (
+          SELECT ps.scenario_id
+          FROM package_scenario ps
+          JOIN run_context rc ON rc.package_id = ps.package_id
+          UNION
+          SELECT ag.scenario_id
+          FROM recommendation_run_addon rra
+          JOIN addon_scenario ag ON ag.addon_id = rra.addon_id
+          JOIN run_context rc ON rc.id = rra.recommendation_run_id
+        )
+        SELECT pt.task_slug, pt.title, pt.description_public, pt.internal_notes,
+               pt.priority, pt.requires_completion, n.slug AS need_slug
+        FROM preparedness_task pt
+        JOIN scenario_need sn ON sn.id = pt.scenario_need_id
+        JOIN need n ON n.id = sn.need_id
+        JOIN active_scenarios act ON act.scenario_id = sn.scenario_id
+        WHERE pt.status = 'active'
+        ORDER BY pt.priority, pt.task_slug`,
+      [runId],
+    );
+
     const sources = await client.query(
       `SELECT gpl.id AS line_id, gls.source_type, n.slug AS scenario_need,
               parent_i.title AS parent_item, gls.explanation
@@ -224,6 +253,7 @@ async function loadRecommendationData(input) {
       input,
       run: run.rows[0],
       lines: lines.rows,
+      tasks: tasks.rows,
       sources: sources.rows,
       coverage: coverage.rows,
       usageConstraints: usageConstraints.rows,
@@ -449,6 +479,7 @@ function renderPage(data) {
         <a class="pill ${currentAddon === 'drinkwater' ? 'good' : ''}" href="/internal/recommendation-poc?addon=drinkwater&tier=${escapeHtml(data.input.tier_slug)}">Drinkwater</a>
         <a class="pill ${currentAddon === 'voedsel_bereiding' ? 'good' : ''}" href="/internal/recommendation-poc?addon=voedsel_bereiding&tier=${escapeHtml(data.input.tier_slug)}">Voedsel</a>
         <a class="pill ${currentAddon === 'hygiene_sanitatie_afval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=hygiene_sanitatie_afval&tier=${escapeHtml(data.input.tier_slug)}">Hygiene</a>
+        <a class="pill ${currentAddon === 'ehbo_persoonlijke_zorg' ? 'good' : ''}" href="/internal/recommendation-poc?addon=ehbo_persoonlijke_zorg&tier=${escapeHtml(data.input.tier_slug)}">EHBO</a>
         <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
       </div>
       <div style="margin-bottom:14px">
@@ -514,6 +545,7 @@ function renderPage(data) {
         const isFoodPrep = ['IOE-COOKER-OUTDOOR-GAS-BASIC', 'IOE-COOKER-OUTDOOR-GAS-PLUS', 'IOE-FUEL-GAS-230G-BASIC', 'IOE-FUEL-GAS-230G-PLUS'].includes(line.sku);
         const isHygieneGoverned = ['IOE-HANDGEL-BASIC', 'IOE-HANDGEL-PLUS', 'IOE-HYGIENE-WIPES-BASIC', 'IOE-HYGIENE-WIPES-PLUS', 'IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku);
         const isSanitationGoverned = ['IOE-TOILET-BAGS-BASIC', 'IOE-TOILET-BAGS-PLUS', 'IOE-ABSORBENT-BASIC', 'IOE-ABSORBENT-PLUS', 'IOE-WASTE-BAGS-BASIC', 'IOE-WASTE-BAGS-PLUS', 'IOE-ZIPBAGS-BASIC', 'IOE-ZIPBAGS-PLUS'].includes(line.sku);
+        const isEhboGoverned = ['IOE-FIRSTAID-KIT-BASIC', 'IOE-FIRSTAID-KIT-PLUS', 'IOE-PLASTERS-BASIC', 'IOE-PLASTERS-PLUS', 'IOE-STERILE-GAUZE-BASIC', 'IOE-STERILE-GAUZE-PLUS', 'IOE-WOUND-CLEANING-BASIC', 'IOE-WOUND-CLEANING-PLUS', 'IOE-MEDICAL-TAPE-BASIC', 'IOE-MEDICAL-TAPE-PLUS', 'IOE-THERMOMETER-PLUS'].includes(line.sku);
         return `
           <details>
             <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span> <span class="pill ${roleLabel(line) === 'core' ? 'good' : 'backup'}">${escapeHtml(roleLabel(line))}</span></summary>
@@ -521,6 +553,7 @@ function renderPage(data) {
             ${isFoodPrep ? `<div class="governance">Voedselbereiding is ondersteunend. Gas, brandstof en open vuur worden niet als primary voedseldekking geteld.</div>` : ''}
             ${isHygieneGoverned ? `<div class="governance">Hygiene-items claimen geen medische bescherming, steriliteit of volledige infectiepreventie.</div>` : ''}
             ${isSanitationGoverned ? `<div class="governance">Sanitatie- en afvalitems zijn bedoeld voor tijdelijke containment en niet voor gevaarlijk, chemisch of medisch afval.</div>` : ''}
+            ${isEhboGoverned ? `<div class="governance">EHBO-items ondersteunen kleine incidenten en observatie. Ze vervangen geen arts, diagnose, behandeling of noodhulp.</div>` : ''}
             <h3 style="margin-top:12px">Sources</h3>
             <table>
               <thead><tr><th>source_type</th><th>scenario_need</th><th>parent item</th><th>explanation</th></tr></thead>
@@ -566,6 +599,28 @@ function renderPage(data) {
       }).join('')}
     </section>
 
+    ${data.tasks.length ? `
+      <section class="band">
+        <div class="section-head">
+          <h2>Tasks en persoonlijke zorgchecks</h2>
+          <span class="pill">${data.tasks.length} tasks</span>
+        </div>
+        <div class="governance">Persoonlijke medicatie en pijnstilling worden hier als task/check getoond, niet als generiek item, supplier offer of doseringsadvies.</div>
+        <table>
+          <thead><tr><th>Task</th><th>Need</th><th>Priority</th><th>Public note</th><th>Internal note</th></tr></thead>
+          <tbody>
+            ${data.tasks.map(task => `
+              <tr>
+                <td class="line-title">${escapeHtml(task.title)}<br><span class="subtle">${escapeHtml(task.task_slug)}</span></td>
+                <td>${escapeHtml(task.need_slug)}</td>
+                <td>${escapeHtml(task.priority)}</td>
+                <td>${escapeHtml(task.description_public)}</td>
+                <td>${escapeHtml(task.internal_notes)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </section>` : ''}
+
     ${renderQaPanel(data)}
   </main>
 </body>
@@ -595,7 +650,7 @@ async function handleRequest(req, res) {
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
     const addonParam = url.searchParams.get('addon');
-    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval'].includes(addonParam) ? addonParam : 'stroomuitval';
+    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg'].includes(addonParam) ? addonParam : 'stroomuitval';
     const data = await loadRecommendationData(inputForSelection(tier, addon));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));
