@@ -1,8 +1,12 @@
+.claude/
 .env
 .env.local
+.env*
+!*.env.example
 directus/.env
 apps/*/.env
 backend/.env
+*.local
 node_modules/
 */node_modules/
 uploads/
