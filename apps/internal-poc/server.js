@@ -19,7 +19,9 @@ const DEFAULT_POC_INPUT = {
 };
 
 function inputForSelection(tierSlug, addonSlug) {
-  const normalizedAddon = addonSlug === 'drinkwater' ? 'drinkwater' : 'stroomuitval';
+  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding'].includes(addonSlug)
+    ? addonSlug
+    : 'stroomuitval';
   return {
     ...DEFAULT_POC_INPUT,
     tier_slug: tierSlug === 'basis' ? 'basis' : 'basis_plus',
@@ -79,6 +81,13 @@ function escapeHtml(value) {
 
 function fmtBool(value) {
   return value ? 'telt mee' : 'ondersteunend / backup / niet voldoende';
+}
+
+function roleLabel(line) {
+  if (line.is_accessory) return 'accessory';
+  if (line.product_type_slug === 'buitenkooktoestel-gas' || line.primary_reason === 'voedsel-verwarmen-ondersteunend') return 'supporting';
+  if (!line.is_core_line) return 'backup';
+  return 'core';
 }
 
 async function countView(client, viewName) {
@@ -143,17 +152,29 @@ async function loadRecommendationData(input) {
 
     const runId = run.rows[0].id;
     const lines = await client.query(
-      `SELECT gpl.id, i.title, i.sku, gpl.quantity, gpl.is_accessory,
-              gpl.selection_score, gpl.explanation_public,
+      `SELECT gpl.id, i.title, i.sku, gpl.quantity, gpl.is_accessory, gpl.is_core_line,
+              gpl.selection_score, gpl.explanation_public, gpl.explanation_internal,
+              pt.slug AS product_type_slug,
               COALESCE(n.slug, '') AS primary_reason,
               (SELECT count(*)::int FROM generated_line_source gls WHERE gls.generated_package_line_id = gpl.id) AS source_count,
               (SELECT count(*)::int FROM generated_line_coverage glc WHERE glc.generated_package_line_id = gpl.id) AS coverage_count
          FROM generated_package_line gpl
          JOIN item i ON i.id = gpl.item_id
+         JOIN product_type pt ON pt.id = gpl.product_type_id
          LEFT JOIN scenario_need sn ON sn.id = gpl.primary_reason_scenario_need_id
          LEFT JOIN need n ON n.id = sn.need_id
         WHERE gpl.recommendation_run_id = $1
         ORDER BY gpl.is_accessory ASC, i.title ASC`,
+      [runId],
+    );
+
+    const usageConstraints = await client.query(
+      `SELECT gpl.id AS line_id, iuc.constraint_type, iuc.severity,
+              iuc.public_warning, iuc.internal_notes, iuc.blocks_recommendation
+         FROM generated_package_line gpl
+         JOIN item_usage_constraint iuc ON iuc.item_id = gpl.item_id AND iuc.status = 'active'
+        WHERE gpl.recommendation_run_id = $1
+        ORDER BY gpl.id, iuc.severity DESC, iuc.constraint_type`,
       [runId],
     );
 
@@ -204,6 +225,7 @@ async function loadRecommendationData(input) {
       lines: lines.rows,
       sources: sources.rows,
       coverage: coverage.rows,
+      usageConstraints: usageConstraints.rows,
       blockingQa,
       warningQa,
       generatedQa,
@@ -261,6 +283,7 @@ function renderQaPanel(data) {
 function renderPage(data) {
   const sourcesByLine = rowsByLine(data.sources);
   const coverageByLine = rowsByLine(data.coverage);
+  const usageByLine = rowsByLine(data.usageConstraints);
   const blockingTotal = data.blockingQa.reduce((sum, row) => sum + row.records, 0);
   const warningTotal = data.warningQa.reduce((sum, row) => sum + row.records, 0);
   const qaStatus = blockingTotal === 0 && warningTotal === 0 ? 'clean' : 'attention';
@@ -423,6 +446,7 @@ function renderPage(data) {
       <div style="margin-bottom:14px">
         <a class="pill ${currentAddon === 'stroomuitval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=stroomuitval&tier=${escapeHtml(data.input.tier_slug)}">Stroomuitval</a>
         <a class="pill ${currentAddon === 'drinkwater' ? 'good' : ''}" href="/internal/recommendation-poc?addon=drinkwater&tier=${escapeHtml(data.input.tier_slug)}">Drinkwater</a>
+        <a class="pill ${currentAddon === 'voedsel_bereiding' ? 'good' : ''}" href="/internal/recommendation-poc?addon=voedsel_bereiding&tier=${escapeHtml(data.input.tier_slug)}">Voedsel</a>
         <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
       </div>
       <div style="margin-bottom:14px">
@@ -455,7 +479,7 @@ function renderPage(data) {
             <th>Item</th>
             <th>SKU</th>
             <th class="num">Qty</th>
-            <th>Type</th>
+            <th>Role</th>
             <th class="num">Score</th>
             <th>Public explanation</th>
             <th class="num">Sources</th>
@@ -468,7 +492,7 @@ function renderPage(data) {
               <td class="line-title">${escapeHtml(line.title)}</td>
               <td>${escapeHtml(line.sku)}</td>
               <td class="num">${escapeHtml(line.quantity)}</td>
-              <td>${line.is_accessory ? 'accessory' : 'core'}</td>
+              <td>${escapeHtml(roleLabel(line))}</td>
               <td class="num">${escapeHtml(line.selection_score)}</td>
               <td>${escapeHtml(line.explanation_public)}</td>
               <td class="num">${line.source_count}</td>
@@ -483,11 +507,14 @@ function renderPage(data) {
       ${data.lines.map(line => {
         const lineSources = sourcesByLine.get(line.id) || [];
         const lineCoverage = coverageByLine.get(line.id) || [];
+        const lineUsage = usageByLine.get(line.id) || [];
         const isRadio = line.sku === 'IOE-RADIO-AAUSB-PLUS';
+        const isFoodPrep = ['IOE-COOKER-OUTDOOR-GAS-BASIC', 'IOE-COOKER-OUTDOOR-GAS-PLUS', 'IOE-FUEL-GAS-230G-BASIC', 'IOE-FUEL-GAS-230G-PLUS'].includes(line.sku);
         return `
           <details>
-            <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span></summary>
+            <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span> <span class="pill ${roleLabel(line) === 'core' ? 'good' : 'backup'}">${escapeHtml(roleLabel(line))}</span></summary>
             ${isRadio ? `<div class="governance">Laad- en lampfuncties tellen alleen als backup en vervangen geen powerbank, hoofdlamp of lantaarn.</div>` : ''}
+            ${isFoodPrep ? `<div class="governance">Voedselbereiding is ondersteunend. Gas, brandstof en open vuur worden niet als primary voedseldekking geteld.</div>` : ''}
             <h3 style="margin-top:12px">Sources</h3>
             <table>
               <thead><tr><th>source_type</th><th>scenario_need</th><th>parent item</th><th>explanation</th></tr></thead>
@@ -515,6 +542,20 @@ function renderPage(data) {
                   </tr>`).join('')}
               </tbody>
             </table>
+            ${lineUsage.length ? `
+              <h3 style="margin-top:12px">Usage constraints</h3>
+              <table>
+                <thead><tr><th>constraint</th><th>severity</th><th>public warning</th><th>internal notes</th></tr></thead>
+                <tbody>
+                  ${lineUsage.map(rule => `
+                    <tr>
+                      <td>${escapeHtml(rule.constraint_type)}</td>
+                      <td>${escapeHtml(rule.severity)}</td>
+                      <td>${escapeHtml(rule.public_warning)}</td>
+                      <td>${escapeHtml(rule.internal_notes)}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>` : ''}
           </details>`;
       }).join('')}
     </section>
@@ -547,7 +588,8 @@ async function handleRequest(req, res) {
     }
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
-    const addon = url.searchParams.get('addon') === 'drinkwater' ? 'drinkwater' : 'stroomuitval';
+    const addonParam = url.searchParams.get('addon');
+    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding'].includes(addonParam) ? addonParam : 'stroomuitval';
     const data = await loadRecommendationData(inputForSelection(tier, addon));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));

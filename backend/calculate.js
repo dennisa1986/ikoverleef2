@@ -298,6 +298,36 @@ function parentTitles(line) {
   return [...new Set(line.sources.map(s => s.parent_title).filter(Boolean))];
 }
 
+function derivedLineRole(line) {
+  const roles = new Set(line.rule_roles || []);
+  const needs = new Set(sourceNeeds(line));
+
+  if (
+    line.is_accessory ||
+    roles.has('accessory') ||
+    line.sources.some(s => s.source_type === 'accessory_requirement') ||
+    [
+      'handmatige-blikopener',
+      'multitool-met-blikopener',
+      'gascartouche',
+      'ontsteking',
+      'kookvat',
+    ].includes(line.product_type_slug)
+  ) {
+    return 'accessory';
+  }
+
+  if (
+    needs.has('voedsel-verwarmen-ondersteunend') ||
+    line.product_type_slug === 'buitenkooktoestel-gas'
+  ) {
+    return 'supporting';
+  }
+
+  if (roles.has('backup')) return 'backup';
+  return 'core';
+}
+
 function publicExplanationForLine(line) {
   switch (line.sku) {
     case 'IOE-PB-20K-PLUS':
@@ -343,6 +373,25 @@ function publicExplanationForLine(line) {
       return 'Deze drinkfles is toegevoegd zodat je bij verplaatsing drinkwater praktisch kunt meenemen.';
     case 'IOE-FILTERBOTTLE-PLUS':
       return 'Deze filterfles combineert water meenemen met een filterfunctie volgens productspecificatie. De filterfunctie is ondersteunend en vervangt geen basisvoorraad.';
+    case 'IOE-FOOD-PACK-1PD-BASIC':
+    case 'IOE-FOOD-PACK-1PD-PLUS':
+      return 'Dit voedselpakket is toegevoegd voor 72 uur voedseldekking per persoon. Het is houdbaar zonder koeling en bruikbaar zonder koken.';
+    case 'IOE-CAN-OPENER-BASIC':
+      return 'Deze handmatige blikopener is toegevoegd omdat de gekozen voedselvariant blikopening vereist.';
+    case 'IOE-MULTITOOL-CAN-OPENER-PLUS':
+      return 'Deze multitool vervangt de dedicated blikopener alleen omdat de blikopenerfunctie als capability is vastgelegd.';
+    case 'IOE-COOKER-OUTDOOR-GAS-BASIC':
+    case 'IOE-COOKER-OUTDOOR-GAS-PLUS':
+      return 'Deze kookoplossing is ondersteunend en alleen voor buitengebruik. Het voedselpakket blijft ook zonder koken bruikbaar.';
+    case 'IOE-FUEL-GAS-230G-BASIC':
+    case 'IOE-FUEL-GAS-230G-PLUS':
+      return 'Deze compatibele brandstof is toegevoegd als verplicht accessoire bij het buitenkooktoestel. Alleen buiten en volgens productinstructies gebruiken.';
+    case 'IOE-IGNITION-LIGHTER-BASIC':
+    case 'IOE-IGNITION-STORM-LIGHTER-PLUS':
+      return 'Deze ontsteking is toegevoegd als verplicht accessoire bij het buitenkooktoestel. Buiten bereik van kinderen bewaren.';
+    case 'IOE-COOK-POT-BASIC':
+    case 'IOE-COOK-SET-PLUS':
+      return 'Dit kookvat is toegevoegd als verplicht accessoire bij de ondersteunende kookoplossing.';
     default:
       if (line.is_accessory) {
         const parents = parentTitles(line);
@@ -357,7 +406,9 @@ function publicExplanationForLine(line) {
 function internalExplanationForLine(line, selectionScore) {
   const needs = sourceNeeds(line);
   const parents = parentTitles(line);
+  const role = derivedLineRole(line);
   const parts = [
+    `role=${role}`,
     `scenario_need=${needs.length ? needs.join(',') : 'n/a'}`,
     `product_type=${line.product_type_slug}`,
     `sku=${line.sku}`,
@@ -376,6 +427,12 @@ function internalExplanationForLine(line, selectionScore) {
   }
   if (['IOE-WATERFILTER-BASIC', 'IOE-WATERFILTER-PLUS', 'IOE-WATER-TABS-BASIC', 'IOE-WATER-TABS-PLUS', 'IOE-FILTERBOTTLE-PLUS'].includes(line.sku)) {
     parts.push('governance=waterbehandeling is backup/supporting en vervangt geen drinkwatervoorraad of thuisopslag');
+  }
+  if (['IOE-COOKER-OUTDOOR-GAS-BASIC', 'IOE-COOKER-OUTDOOR-GAS-PLUS', 'IOE-FUEL-GAS-230G-BASIC', 'IOE-FUEL-GAS-230G-PLUS', 'IOE-IGNITION-LIGHTER-BASIC', 'IOE-IGNITION-STORM-LIGHTER-PLUS', 'IOE-COOK-POT-BASIC', 'IOE-COOK-SET-PLUS'].includes(line.sku)) {
+    parts.push('governance=voedselbereiding is supporting/accessory; geen primary food coverage; alleen buiten en volgens instructie');
+  }
+  if (['IOE-FOOD-PACK-1PD-BASIC', 'IOE-FOOD-PACK-1PD-PLUS'].includes(line.sku)) {
+    parts.push('governance=core food coverage blijft no-cook en zonder koeling');
   }
 
   return parts.join('; ');
@@ -426,6 +483,55 @@ async function main(inputOverride = null, options = {}) {
     const snIds = scenarioNeeds.map(s => s.id);
     const productRules = await resolveProductRules(c, snIds);
     const scenarioNeedById = new Map(scenarioNeeds.map(sn => [sn.id, sn]));
+    const needCapabilityIdsByScenarioNeedId = new Map();
+
+    async function capabilityIdsForScenarioNeed(scenarioNeedId) {
+      if (needCapabilityIdsByScenarioNeedId.has(scenarioNeedId)) {
+        return needCapabilityIdsByScenarioNeedId.get(scenarioNeedId);
+      }
+      const sn = scenarioNeedById.get(scenarioNeedId);
+      if (!sn) return new Set();
+      const needCaps = await resolveNeedCapabilities(c, sn.need_id);
+      const ids = new Set(needCaps.map(nc => nc.capability_id));
+      needCapabilityIdsByScenarioNeedId.set(scenarioNeedId, ids);
+      return ids;
+    }
+
+    async function accessorySourcesForSelection(selection, req) {
+      const relevantSources = [];
+      if (req.required_capability_id) {
+        for (const src of selection.sources) {
+          if (!src.scenario_need_id) continue;
+          const ids = await capabilityIdsForScenarioNeed(src.scenario_need_id);
+          if (ids.has(req.required_capability_id)) relevantSources.push(src);
+        }
+      }
+
+      if (!relevantSources.length && req.required_capability_id) {
+        for (const sn of scenarioNeeds) {
+          const ids = await capabilityIdsForScenarioNeed(sn.id);
+          if (ids.has(req.required_capability_id)) {
+            relevantSources.push({
+              scenario_need_id: sn.id,
+              scenario_need_slug: sn.need_slug,
+            });
+          }
+        }
+      }
+
+      const baseSources = relevantSources.length ? relevantSources : selection.sources;
+      return baseSources.map(src => ({
+        source_type: 'accessory_requirement',
+        scenario_need_id: src.scenario_need_id,
+        scenario_need_slug: src.scenario_need_slug,
+        accessory_requirement_id: req.id,
+        parent_item_id: selection.item_id,
+        parent_title: selection.title,
+        required_capability_id: req.required_capability_id,
+        required_capability_slug: req.required_capability_slug,
+        explanation: req.reason,
+      }));
+    }
 
     /**
      * Step 1: pick a candidate item per product_rule, compute quantity, build raw selections.
@@ -460,6 +566,7 @@ async function main(inputOverride = null, options = {}) {
         availability_status: picked.availability_status,
         quantity: qty,
         is_accessory: false,
+        rule_roles: [rule.role],
         primary_reason_scenario_need_id: rule.scenario_need_id,
         accessory_requirement_id: null,
         sources: [{
@@ -492,6 +599,9 @@ async function main(inputOverride = null, options = {}) {
           continue;
         }
 
+        const sources = await accessorySourcesForSelection(sel, req);
+        const primaryReasonScenarioNeedId = sources[0]?.scenario_need_id || sel.primary_reason_scenario_need_id;
+
         accessorySelections.push({
           item_id: picked.item_id,
           product_type_id: req.required_product_type_id,
@@ -505,22 +615,13 @@ async function main(inputOverride = null, options = {}) {
           availability_status: picked.availability_status,
           quantity: qty,
           is_accessory: true,
-          primary_reason_scenario_need_id: sel.primary_reason_scenario_need_id,
+          rule_roles: ['accessory'],
+          primary_reason_scenario_need_id: primaryReasonScenarioNeedId,
           accessory_requirement_id: req.id,
           required_capability_id: req.required_capability_id,
           required_capability_slug: req.required_capability_slug,
           parent_selection: sel,
-          sources: [{
-            source_type: 'accessory_requirement',
-            scenario_need_id: sel.primary_reason_scenario_need_id,
-            scenario_need_slug: scenarioNeedById.get(sel.primary_reason_scenario_need_id)?.need_slug,
-            accessory_requirement_id: req.id,
-            parent_item_id: sel.item_id,
-            parent_title: sel.title,
-            required_capability_id: req.required_capability_id,
-            required_capability_slug: req.required_capability_slug,
-            explanation: req.reason,
-          }],
+          sources,
         });
       }
     }
@@ -538,6 +639,7 @@ async function main(inputOverride = null, options = {}) {
       }
       existing.quantity = Math.max(Number(existing.quantity), Number(sel.quantity));
       existing.sources.push(...sel.sources);
+      existing.rule_roles = [...new Set([...(existing.rule_roles || []), ...(sel.rule_roles || [])])];
       // If at least one occurrence is non-accessory, treat dedup'd line as core.
       existing.is_accessory = existing.is_accessory && sel.is_accessory;
     }
@@ -549,6 +651,7 @@ async function main(inputOverride = null, options = {}) {
     const writtenLines = [];
     for (const line of lines) {
       const selectionScore = computeSelectionScore(line);
+      const lineRole = derivedLineRole(line);
       const insertedLine = await c.query(
         `INSERT INTO generated_package_line
            (recommendation_run_id, item_id, product_type_id, quantity,
@@ -560,7 +663,7 @@ async function main(inputOverride = null, options = {}) {
         [
           runId, line.item_id, line.product_type_id, line.quantity,
           line.primary_reason_scenario_need_id, line.accessory_requirement_id,
-          line.is_accessory, !line.is_accessory,
+          lineRole === 'accessory', lineRole === 'core',
           selectionScore,
           publicExplanationForLine(line),
           internalExplanationForLine(line, selectionScore),
