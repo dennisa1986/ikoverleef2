@@ -19,7 +19,7 @@ const DEFAULT_POC_INPUT = {
 };
 
 function inputForSelection(tierSlug, addonSlug) {
-  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light'].includes(addonSlug)
+  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie'].includes(addonSlug)
     ? addonSlug
     : 'stroomuitval';
   return {
@@ -484,6 +484,7 @@ function renderPage(data) {
         <a class="pill ${currentAddon === 'hygiene_sanitatie_afval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=hygiene_sanitatie_afval&tier=${escapeHtml(data.input.tier_slug)}">Hygiene</a>
         <a class="pill ${currentAddon === 'ehbo_persoonlijke_zorg' ? 'good' : ''}" href="/internal/recommendation-poc?addon=ehbo_persoonlijke_zorg&tier=${escapeHtml(data.input.tier_slug)}">EHBO</a>
         <a class="pill ${currentAddon === 'warmte_droog_shelter_light' ? 'good' : ''}" href="/internal/recommendation-poc?addon=warmte_droog_shelter_light&tier=${escapeHtml(data.input.tier_slug)}">Warmte/Droog</a>
+        <a class="pill ${currentAddon === 'evacuatie' ? 'good' : ''}" href="/internal/recommendation-poc?addon=evacuatie&tier=${escapeHtml(data.input.tier_slug)}">Evacuatie</a>
         <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
       </div>
       <div style="margin-bottom:14px">
@@ -552,6 +553,7 @@ function renderPage(data) {
         const isEhboGoverned = ['IOE-FIRSTAID-KIT-BASIC', 'IOE-FIRSTAID-KIT-PLUS', 'IOE-PLASTERS-BASIC', 'IOE-PLASTERS-PLUS', 'IOE-STERILE-GAUZE-BASIC', 'IOE-STERILE-GAUZE-PLUS', 'IOE-WOUND-CLEANING-BASIC', 'IOE-WOUND-CLEANING-PLUS', 'IOE-MEDICAL-TAPE-BASIC', 'IOE-MEDICAL-TAPE-PLUS', 'IOE-THERMOMETER-PLUS'].includes(line.sku);
         const isWarmthGoverned = ['IOE-THERMAL-BLANKET-BASIC', 'IOE-THERMAL-BLANKET-PLUS', 'IOE-EMERGENCY-BLANKET-BASIC', 'IOE-EMERGENCY-BIVVY-PLUS'].includes(line.sku);
         const isShelterLightGoverned = ['IOE-PONCHO-BASIC', 'IOE-PONCHO-PLUS', 'IOE-TARP-LIGHT-BASIC', 'IOE-TARP-LIGHT-PLUS', 'IOE-PARACORD-BASIC', 'IOE-PARACORD-PLUS', 'IOE-TARP-PEGS-BASIC', 'IOE-TARP-PEGS-PLUS', 'IOE-GROUNDSHEET-PLUS'].includes(line.sku);
+        const isEvacuatieGoverned = ['IOE-EVAC-BAG-BASIC', 'IOE-EVAC-BAG-PLUS', 'IOE-DOC-FOLDER-BASIC', 'IOE-DOC-FOLDER-PLUS', 'IOE-WHISTLE-BASIC', 'IOE-WHISTLE-PLUS', 'IOE-REFLECTIVE-VEST-BASIC', 'IOE-REFLECTIVE-VEST-PLUS', 'IOE-HEADLAMP-AAA-BASIC', 'IOE-HEADLAMP-AAA-PLUS', 'IOE-BOTTLE-1L-BASIC', 'IOE-BOTTLE-1L-PLUS', 'IOE-FILTERBOTTLE-PLUS'].includes(line.sku);
         return `
           <details>
             <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span> <span class="pill ${roleLabel(line) === 'core' ? 'good' : 'backup'}">${escapeHtml(roleLabel(line))}</span></summary>
@@ -562,6 +564,7 @@ function renderPage(data) {
             ${isEhboGoverned ? `<div class="governance">EHBO-items ondersteunen kleine incidenten en observatie. Ze vervangen geen arts, diagnose, behandeling of noodhulp.</div>` : ''}
             ${isWarmthGoverned ? `<div class="governance">Warmte-items ondersteunen warmtebehoud. Ze vervangen geen slaapcomfort en behandelen geen onderkoeling. Houd ze uit de buurt van open vuur.</div>` : ''}
             ${isShelterLightGoverned ? `<div class="governance">Shelter-light items zijn tijdelijke afscherming en persoonlijke regenbescherming. Ze zijn geen tent, geen warmtebron, geen volledige shelter en geen garantie tegen extreem weer.</div>` : ''}
+            ${isEvacuatieGoverned ? `<div class="governance">Evacuatie-items ondersteunen dragen, documentbescherming, signalering, licht en water meenemen. Ze garanderen geen veilige evacuatie, geen redding en geen universele waterfiltering; documenten, cash, sleutels en medicatie blijven checks.</div>` : ''}
             <h3 style="margin-top:12px">Sources</h3>
             <table>
               <thead><tr><th>source_type</th><th>scenario_need</th><th>parent item</th><th>explanation</th></tr></thead>
@@ -610,10 +613,10 @@ function renderPage(data) {
     ${data.tasks.length ? `
       <section class="band">
         <div class="section-head">
-          <h2>Tasks en persoonlijke zorgchecks</h2>
+          <h2>Tasks en checks</h2>
           <span class="pill">${data.tasks.length} tasks</span>
         </div>
-        <div class="governance">Persoonlijke medicatie en pijnstilling worden hier als task/check getoond, niet als generiek item, supplier offer of doseringsadvies.</div>
+        <div class="governance">Persoonlijke en administratieve readiness kan hier als task/check terugkomen. Denk aan documenten, contacten, sleutels, cash, laders, medicatie of andere checks die we bewust niet als generiek productitem genereren.</div>
         <table>
           <thead><tr><th>Task</th><th>Need</th><th>Priority</th><th>Public note</th><th>Internal note</th></tr></thead>
           <tbody>
@@ -658,7 +661,7 @@ async function handleRequest(req, res) {
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
     const addonParam = url.searchParams.get('addon');
-    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light'].includes(addonParam) ? addonParam : 'stroomuitval';
+    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie'].includes(addonParam) ? addonParam : 'stroomuitval';
     const data = await loadRecommendationData(inputForSelection(tier, addon));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));

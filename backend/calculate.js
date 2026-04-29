@@ -465,6 +465,18 @@ function publicExplanationForLine(line) {
       return 'Deze haringen zijn toegevoegd om de tarp-light te verankeren. Ze zijn bevestiging en geen beschutting op zichzelf.';
     case 'IOE-GROUNDSHEET-PLUS':
       return 'Dit grondzeil is toegevoegd als ondersteunende vochtbarrière. Het is geen slaapmat of volledige beschuttingsoplossing.';
+    case 'IOE-EVAC-BAG-BASIC':
+    case 'IOE-EVAC-BAG-PLUS':
+      return 'Deze evacuatietas is toegevoegd als draag- en packability-oplossing. De tas ordent en draagt spullen, maar bepaalt niet zelf de inhoud van je pakket.';
+    case 'IOE-DOC-FOLDER-BASIC':
+    case 'IOE-DOC-FOLDER-PLUS':
+      return 'Deze documentenmap is toegevoegd om belangrijke papieren beschermd en compact te bundelen. De documenten zelf blijven een persoonlijke checklist.';
+    case 'IOE-WHISTLE-BASIC':
+    case 'IOE-WHISTLE-PLUS':
+      return 'Deze noodfluit is toegevoegd als eenvoudige hoorbare signalering. Hij ondersteunt aandacht trekken, maar garandeert geen redding of hulp.';
+    case 'IOE-REFLECTIVE-VEST-BASIC':
+    case 'IOE-REFLECTIVE-VEST-PLUS':
+      return 'Dit reflectievest is toegevoegd om onderweg beter zichtbaar te zijn. Het ondersteunt zichtbaarheid, maar garandeert geen veiligheid.';
     default:
       if (line.is_accessory) {
         const parents = parentTitles(line);
@@ -518,6 +530,9 @@ function internalExplanationForLine(line, selectionScore) {
   }
   if (['IOE-THERMAL-BLANKET-BASIC', 'IOE-THERMAL-BLANKET-PLUS', 'IOE-EMERGENCY-BLANKET-BASIC', 'IOE-EMERGENCY-BIVVY-PLUS', 'IOE-PONCHO-BASIC', 'IOE-PONCHO-PLUS', 'IOE-TARP-LIGHT-BASIC', 'IOE-TARP-LIGHT-PLUS', 'IOE-PARACORD-BASIC', 'IOE-PARACORD-PLUS', 'IOE-TARP-PEGS-BASIC', 'IOE-TARP-PEGS-PLUS', 'IOE-GROUNDSHEET-PLUS'].includes(line.sku)) {
     parts.push('governance=warmte/droog/shelter-light is ondersteunend; geen slaapcomfort, geen onderkoelingbehandeling, geen full shelter en geen extreme weather garantie');
+  }
+  if (['IOE-EVAC-BAG-BASIC', 'IOE-EVAC-BAG-PLUS', 'IOE-DOC-FOLDER-BASIC', 'IOE-DOC-FOLDER-PLUS', 'IOE-WHISTLE-BASIC', 'IOE-WHISTLE-PLUS', 'IOE-REFLECTIVE-VEST-BASIC', 'IOE-REFLECTIVE-VEST-PLUS', 'IOE-HEADLAMP-AAA-BASIC', 'IOE-HEADLAMP-AAA-PLUS', 'IOE-BOTTLE-1L-BASIC', 'IOE-BOTTLE-1L-PLUS', 'IOE-FILTERBOTTLE-PLUS'].includes(line.sku) && needs.some(need => ['evacuatietas-dragen', 'documenten-beschermen', 'hoorbaar-signaleren', 'zichtbaar-onderweg', 'licht-onderweg', 'drinkwater-meenemen-evacuatie'].includes(need))) {
+    parts.push('governance=evacuatie-items ondersteunen dragen, documentbescherming, zichtbaarheid, licht en water meenemen; geen veilige evacuatie-, reddings- of universele filterclaim');
   }
   if (['IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku) && needs.some(need => ['zorg-handbescherming', 'basis-ehbo', 'wondreiniging-ondersteunen'].includes(need))) {
     parts.push('governance=handschoenen hergebruikt voor wondzorghandling; geen steriele medische bescherming');
@@ -829,6 +844,7 @@ async function main(inputOverride = null, options = {}) {
       const itemCaps = await getItemCaps(line.item_id);
       const itemCapById = new Map(itemCaps.map(ic => [ic.capability_id, ic]));
       const writtenCoverage = new Set(); // dedup (scenario_need_id, capability_id)
+      const lineRole = derivedLineRole(line);
 
       for (const src of line.sources) {
         if (src.source_type === 'scenario_need' && src.scenario_need_id) {
@@ -843,6 +859,8 @@ async function main(inputOverride = null, options = {}) {
             writtenCoverage.add(key);
 
             const sufficient =
+              lineRole !== 'backup' &&
+              lineRole !== 'supporting' &&
               meetsRequiredStrength(ic.coverage_strength, nc.default_required_strength) &&
               ic.claim_type !== 'manufacturer_claim';
 
