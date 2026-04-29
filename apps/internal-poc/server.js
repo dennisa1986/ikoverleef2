@@ -19,7 +19,7 @@ const DEFAULT_POC_INPUT = {
 };
 
 function inputForSelection(tierSlug, addonSlug) {
-  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg'].includes(addonSlug)
+  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light'].includes(addonSlug)
     ? addonSlug
     : 'stroomuitval';
   return {
@@ -88,7 +88,10 @@ function roleLabel(line) {
   if (line.product_type_slug === 'buitenkooktoestel-gas' || line.primary_reason === 'voedsel-verwarmen-ondersteunend') return 'supporting';
   if (['sanitair-absorptiemiddel', 'zipbags', 'nitril-handschoenen'].includes(line.product_type_slug)) return 'accessory';
   if (line.product_type_slug === 'verbandtape') return 'accessory';
+  if (['paracord', 'tarp-haringen'].includes(line.product_type_slug)) return 'accessory';
   if (line.product_type_slug === 'thermometer' || line.primary_reason === 'temperatuur-controleren') return 'supporting';
+  if (line.product_type_slug === 'nooddeken' || line.primary_reason === 'noodwarmte-backup') return 'supporting';
+  if (line.product_type_slug === 'grondzeil' || line.primary_reason === 'grondvocht-barriere') return 'supporting';
   if (!line.is_core_line) return 'backup';
   return 'core';
 }
@@ -480,6 +483,7 @@ function renderPage(data) {
         <a class="pill ${currentAddon === 'voedsel_bereiding' ? 'good' : ''}" href="/internal/recommendation-poc?addon=voedsel_bereiding&tier=${escapeHtml(data.input.tier_slug)}">Voedsel</a>
         <a class="pill ${currentAddon === 'hygiene_sanitatie_afval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=hygiene_sanitatie_afval&tier=${escapeHtml(data.input.tier_slug)}">Hygiene</a>
         <a class="pill ${currentAddon === 'ehbo_persoonlijke_zorg' ? 'good' : ''}" href="/internal/recommendation-poc?addon=ehbo_persoonlijke_zorg&tier=${escapeHtml(data.input.tier_slug)}">EHBO</a>
+        <a class="pill ${currentAddon === 'warmte_droog_shelter_light' ? 'good' : ''}" href="/internal/recommendation-poc?addon=warmte_droog_shelter_light&tier=${escapeHtml(data.input.tier_slug)}">Warmte/Droog</a>
         <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
       </div>
       <div style="margin-bottom:14px">
@@ -546,6 +550,8 @@ function renderPage(data) {
         const isHygieneGoverned = ['IOE-HANDGEL-BASIC', 'IOE-HANDGEL-PLUS', 'IOE-HYGIENE-WIPES-BASIC', 'IOE-HYGIENE-WIPES-PLUS', 'IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku);
         const isSanitationGoverned = ['IOE-TOILET-BAGS-BASIC', 'IOE-TOILET-BAGS-PLUS', 'IOE-ABSORBENT-BASIC', 'IOE-ABSORBENT-PLUS', 'IOE-WASTE-BAGS-BASIC', 'IOE-WASTE-BAGS-PLUS', 'IOE-ZIPBAGS-BASIC', 'IOE-ZIPBAGS-PLUS'].includes(line.sku);
         const isEhboGoverned = ['IOE-FIRSTAID-KIT-BASIC', 'IOE-FIRSTAID-KIT-PLUS', 'IOE-PLASTERS-BASIC', 'IOE-PLASTERS-PLUS', 'IOE-STERILE-GAUZE-BASIC', 'IOE-STERILE-GAUZE-PLUS', 'IOE-WOUND-CLEANING-BASIC', 'IOE-WOUND-CLEANING-PLUS', 'IOE-MEDICAL-TAPE-BASIC', 'IOE-MEDICAL-TAPE-PLUS', 'IOE-THERMOMETER-PLUS'].includes(line.sku);
+        const isWarmthGoverned = ['IOE-THERMAL-BLANKET-BASIC', 'IOE-THERMAL-BLANKET-PLUS', 'IOE-EMERGENCY-BLANKET-BASIC', 'IOE-EMERGENCY-BIVVY-PLUS'].includes(line.sku);
+        const isShelterLightGoverned = ['IOE-PONCHO-BASIC', 'IOE-PONCHO-PLUS', 'IOE-TARP-LIGHT-BASIC', 'IOE-TARP-LIGHT-PLUS', 'IOE-PARACORD-BASIC', 'IOE-PARACORD-PLUS', 'IOE-TARP-PEGS-BASIC', 'IOE-TARP-PEGS-PLUS', 'IOE-GROUNDSHEET-PLUS'].includes(line.sku);
         return `
           <details>
             <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span> <span class="pill ${roleLabel(line) === 'core' ? 'good' : 'backup'}">${escapeHtml(roleLabel(line))}</span></summary>
@@ -554,6 +560,8 @@ function renderPage(data) {
             ${isHygieneGoverned ? `<div class="governance">Hygiene-items claimen geen medische bescherming, steriliteit of volledige infectiepreventie.</div>` : ''}
             ${isSanitationGoverned ? `<div class="governance">Sanitatie- en afvalitems zijn bedoeld voor tijdelijke containment en niet voor gevaarlijk, chemisch of medisch afval.</div>` : ''}
             ${isEhboGoverned ? `<div class="governance">EHBO-items ondersteunen kleine incidenten en observatie. Ze vervangen geen arts, diagnose, behandeling of noodhulp.</div>` : ''}
+            ${isWarmthGoverned ? `<div class="governance">Warmte-items ondersteunen warmtebehoud. Ze vervangen geen slaapcomfort en behandelen geen onderkoeling. Houd ze uit de buurt van open vuur.</div>` : ''}
+            ${isShelterLightGoverned ? `<div class="governance">Shelter-light items zijn tijdelijke afscherming en persoonlijke regenbescherming. Ze zijn geen tent, geen warmtebron, geen volledige shelter en geen garantie tegen extreem weer.</div>` : ''}
             <h3 style="margin-top:12px">Sources</h3>
             <table>
               <thead><tr><th>source_type</th><th>scenario_need</th><th>parent item</th><th>explanation</th></tr></thead>
@@ -650,7 +658,7 @@ async function handleRequest(req, res) {
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
     const addonParam = url.searchParams.get('addon');
-    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg'].includes(addonParam) ? addonParam : 'stroomuitval';
+    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light'].includes(addonParam) ? addonParam : 'stroomuitval';
     const data = await loadRecommendationData(inputForSelection(tier, addon));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));

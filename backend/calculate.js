@@ -445,6 +445,26 @@ function publicExplanationForLine(line) {
       return 'Deze verbandtape is toegevoegd om gaas of verband te fixeren. Tape behandelt geen wond.';
     case 'IOE-THERMOMETER-PLUS':
       return 'Deze thermometer is toegevoegd als ondersteunend middel om temperatuur te meten. Hij stelt geen diagnose en geeft geen behandeladvies.';
+    case 'IOE-THERMAL-BLANKET-BASIC':
+    case 'IOE-THERMAL-BLANKET-PLUS':
+      return 'Deze warmtedeken is toegevoegd om lichaamswarmte beter vast te houden bij kou of verwarmingsuitval. Dit is praktische warmteondersteuning en geen medische behandeling van onderkoeling.';
+    case 'IOE-EMERGENCY-BLANKET-BASIC':
+    case 'IOE-EMERGENCY-BIVVY-PLUS':
+      return 'Deze nooddeken is toegevoegd als compacte backup voor warmtebehoud. Hij helpt warmteverlies beperken, maar vervangt geen warme slaapoplossing of medische hulp bij onderkoeling.';
+    case 'IOE-PONCHO-BASIC':
+    case 'IOE-PONCHO-PLUS':
+      return 'Deze poncho is toegevoegd om jezelf droog te houden bij regen of natte omstandigheden. Een poncho is persoonlijke regenbescherming en geen volwaardige beschutting.';
+    case 'IOE-TARP-LIGHT-BASIC':
+    case 'IOE-TARP-LIGHT-PLUS':
+      return 'Deze tarp-light is toegevoegd als eenvoudige tijdelijke afscherming. Hij is geen tent, woning of volwaardige shelter en biedt geen warmte.';
+    case 'IOE-PARACORD-BASIC':
+    case 'IOE-PARACORD-PLUS':
+      return 'Deze paracord is toegevoegd om de tarp-light praktisch te kunnen bevestigen. Gebruik veilig en voorkom losraken of struikelgevaar.';
+    case 'IOE-TARP-PEGS-BASIC':
+    case 'IOE-TARP-PEGS-PLUS':
+      return 'Deze haringen zijn toegevoegd om de tarp-light te verankeren. Ze zijn bevestiging en geen beschutting op zichzelf.';
+    case 'IOE-GROUNDSHEET-PLUS':
+      return 'Dit grondzeil is toegevoegd als ondersteunende vochtbarrière. Het is geen slaapmat of volledige beschuttingsoplossing.';
     default:
       if (line.is_accessory) {
         const parents = parentTitles(line);
@@ -495,6 +515,9 @@ function internalExplanationForLine(line, selectionScore) {
   }
   if (['IOE-FIRSTAID-KIT-BASIC', 'IOE-FIRSTAID-KIT-PLUS', 'IOE-PLASTERS-BASIC', 'IOE-PLASTERS-PLUS', 'IOE-STERILE-GAUZE-BASIC', 'IOE-STERILE-GAUZE-PLUS', 'IOE-WOUND-CLEANING-BASIC', 'IOE-WOUND-CLEANING-PLUS', 'IOE-MEDICAL-TAPE-BASIC', 'IOE-MEDICAL-TAPE-PLUS', 'IOE-THERMOMETER-PLUS'].includes(line.sku)) {
     parts.push('governance=EHBO/persoonlijke zorg is ondersteunend; geen diagnose, behandeling of artsvervangende claim');
+  }
+  if (['IOE-THERMAL-BLANKET-BASIC', 'IOE-THERMAL-BLANKET-PLUS', 'IOE-EMERGENCY-BLANKET-BASIC', 'IOE-EMERGENCY-BIVVY-PLUS', 'IOE-PONCHO-BASIC', 'IOE-PONCHO-PLUS', 'IOE-TARP-LIGHT-BASIC', 'IOE-TARP-LIGHT-PLUS', 'IOE-PARACORD-BASIC', 'IOE-PARACORD-PLUS', 'IOE-TARP-PEGS-BASIC', 'IOE-TARP-PEGS-PLUS', 'IOE-GROUNDSHEET-PLUS'].includes(line.sku)) {
+    parts.push('governance=warmte/droog/shelter-light is ondersteunend; geen slaapcomfort, geen onderkoelingbehandeling, geen full shelter en geen extreme weather garantie');
   }
   if (['IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku) && needs.some(need => ['zorg-handbescherming', 'basis-ehbo', 'wondreiniging-ondersteunen'].includes(need))) {
     parts.push('governance=handschoenen hergebruikt voor wondzorghandling; geen steriele medische bescherming');

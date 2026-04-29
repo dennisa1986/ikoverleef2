@@ -9,7 +9,8 @@
     "test:drinkwater-poc": "node regression_drinkwater_poc.js",
     "test:voedsel-poc": "node regression_voedsel_poc.js",
     "test:hygiene-sanitatie-poc": "node regression_hygiene_sanitatie_poc.js",
-    "test:ehbo-poc": "node regression_ehbo_poc.js"
+    "test:ehbo-poc": "node regression_ehbo_poc.js",
+    "test:warmte-droog-shelter-poc": "node regression_warmte_droog_shelter_poc.js"
   },
   "dependencies": {
     "pg": "^8.13.0"
