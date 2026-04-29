@@ -971,6 +971,9 @@ async function main(inputOverride = null, options = {}) {
     console.log('Generated package lines:');
     console.log('  qty | type      | score | sources | coverage | sku                       | item');
     console.log('  ----+-----------+-------+---------+----------+---------------------------+----------------------------------------------');
+    if (!out.rows.length) {
+      console.log('  (geen productregels gegenereerd; controleer preparedness_task output voor content-only scenario\'s)');
+    }
     for (const r of out.rows) {
       console.log(
         `  ${String(r.quantity).padStart(3)} | ${(r.is_accessory ? 'accessory' : 'core     ').padEnd(9)} | ${String(r.selection_score).padStart(5)} | ${String(r.source_count).padStart(7)} | ${String(r.coverage_count).padStart(8)} | ${(r.sku || '').padEnd(25)} | ${r.title}`,

@@ -11,7 +11,8 @@
     "test:hygiene-sanitatie-poc": "node regression_hygiene_sanitatie_poc.js",
     "test:ehbo-poc": "node regression_ehbo_poc.js",
     "test:warmte-droog-shelter-poc": "node regression_warmte_droog_shelter_poc.js",
-    "test:evacuatie-poc": "node regression_evacuatie_poc.js"
+    "test:evacuatie-poc": "node regression_evacuatie_poc.js",
+    "test:taken-profielen-poc": "node regression_taken_profielen_poc.js"
   },
   "dependencies": {
     "pg": "^8.13.0"

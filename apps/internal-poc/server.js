@@ -18,15 +18,25 @@ const DEFAULT_POC_INPUT = {
   household_pets: 0,
 };
 
-function inputForSelection(tierSlug, addonSlug) {
-  const normalizedAddon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie'].includes(addonSlug)
+const ALLOWED_ADDONS = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie', 'taken_profielen'];
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
+}
+
+function inputForSelection(tierSlug, addonSlug, overrides = {}) {
+  const normalizedAddon = ALLOWED_ADDONS.includes(addonSlug)
     ? addonSlug
     : 'stroomuitval';
   return {
     ...DEFAULT_POC_INPUT,
     tier_slug: tierSlug === 'basis' ? 'basis' : 'basis_plus',
     addon_slugs: [normalizedAddon],
-    duration_hours: 72,
+    duration_hours: parsePositiveInt(overrides.duration_hours, 72),
+    household_adults: Math.max(1, parsePositiveInt(overrides.household_adults, DEFAULT_POC_INPUT.household_adults)),
+    household_children: parsePositiveInt(overrides.household_children, DEFAULT_POC_INPUT.household_children),
+    household_pets: parsePositiveInt(overrides.household_pets, DEFAULT_POC_INPUT.household_pets),
   };
 }
 
@@ -322,6 +332,7 @@ function renderPage(data) {
   const warningTotal = data.warningQa.reduce((sum, row) => sum + row.records, 0);
   const qaStatus = blockingTotal === 0 && warningTotal === 0 ? 'clean' : 'attention';
   const currentAddon = data.input.addon_slugs[0] || 'stroomuitval';
+  const querySuffix = `&adults=${encodeURIComponent(data.input.household_adults)}&children=${encodeURIComponent(data.input.household_children)}&pets=${encodeURIComponent(data.input.household_pets)}&duration_hours=${encodeURIComponent(data.input.duration_hours)}`;
 
   return `<!doctype html>
 <html lang="nl">
@@ -478,18 +489,19 @@ function renderPage(data) {
         <span class="status ${qaStatus === 'clean' ? 'ok' : 'warn'}">QA ${escapeHtml(qaStatus)}</span>
       </div>
       <div style="margin-bottom:14px">
-        <a class="pill ${currentAddon === 'stroomuitval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=stroomuitval&tier=${escapeHtml(data.input.tier_slug)}">Stroomuitval</a>
-        <a class="pill ${currentAddon === 'drinkwater' ? 'good' : ''}" href="/internal/recommendation-poc?addon=drinkwater&tier=${escapeHtml(data.input.tier_slug)}">Drinkwater</a>
-        <a class="pill ${currentAddon === 'voedsel_bereiding' ? 'good' : ''}" href="/internal/recommendation-poc?addon=voedsel_bereiding&tier=${escapeHtml(data.input.tier_slug)}">Voedsel</a>
-        <a class="pill ${currentAddon === 'hygiene_sanitatie_afval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=hygiene_sanitatie_afval&tier=${escapeHtml(data.input.tier_slug)}">Hygiene</a>
-        <a class="pill ${currentAddon === 'ehbo_persoonlijke_zorg' ? 'good' : ''}" href="/internal/recommendation-poc?addon=ehbo_persoonlijke_zorg&tier=${escapeHtml(data.input.tier_slug)}">EHBO</a>
-        <a class="pill ${currentAddon === 'warmte_droog_shelter_light' ? 'good' : ''}" href="/internal/recommendation-poc?addon=warmte_droog_shelter_light&tier=${escapeHtml(data.input.tier_slug)}">Warmte/Droog</a>
-        <a class="pill ${currentAddon === 'evacuatie' ? 'good' : ''}" href="/internal/recommendation-poc?addon=evacuatie&tier=${escapeHtml(data.input.tier_slug)}">Evacuatie</a>
+        <a class="pill ${currentAddon === 'stroomuitval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=stroomuitval&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Stroomuitval</a>
+        <a class="pill ${currentAddon === 'drinkwater' ? 'good' : ''}" href="/internal/recommendation-poc?addon=drinkwater&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Drinkwater</a>
+        <a class="pill ${currentAddon === 'voedsel_bereiding' ? 'good' : ''}" href="/internal/recommendation-poc?addon=voedsel_bereiding&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Voedsel</a>
+        <a class="pill ${currentAddon === 'hygiene_sanitatie_afval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=hygiene_sanitatie_afval&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Hygiene</a>
+        <a class="pill ${currentAddon === 'ehbo_persoonlijke_zorg' ? 'good' : ''}" href="/internal/recommendation-poc?addon=ehbo_persoonlijke_zorg&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">EHBO</a>
+        <a class="pill ${currentAddon === 'warmte_droog_shelter_light' ? 'good' : ''}" href="/internal/recommendation-poc?addon=warmte_droog_shelter_light&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Warmte/Droog</a>
+        <a class="pill ${currentAddon === 'evacuatie' ? 'good' : ''}" href="/internal/recommendation-poc?addon=evacuatie&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Evacuatie</a>
+        <a class="pill ${currentAddon === 'taken_profielen' ? 'good' : ''}" href="/internal/recommendation-poc?addon=taken_profielen&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Taken/Profielen</a>
         <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
       </div>
       <div style="margin-bottom:14px">
-        <a class="pill ${data.input.tier_slug === 'basis' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis">Basis</a>
-        <a class="pill ${data.input.tier_slug === 'basis_plus' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis_plus">Basis+</a>
+        <a class="pill ${data.input.tier_slug === 'basis' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis${querySuffix}">Basis</a>
+        <a class="pill ${data.input.tier_slug === 'basis_plus' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis_plus${querySuffix}">Basis+</a>
         <span class="subtle" style="margin-left:8px">Tierkeuze voor dezelfde interne POC-input.</span>
       </div>
       <div class="summary-grid">
@@ -500,6 +512,8 @@ function renderPage(data) {
         <div><span>add-ons</span><strong>${data.run.addons.map(a => `${escapeHtml(a.name)} (${escapeHtml(a.slug)})`).join(', ')}</strong></div>
         <div><span>duration_hours</span><strong>${data.run.duration_hours}</strong></div>
         <div><span>household_adults</span><strong>${data.run.household_adults}</strong></div>
+        <div><span>household_children</span><strong>${data.run.household_children}</strong></div>
+        <div><span>household_pets</span><strong>${data.run.household_pets}</strong></div>
         <div><span>QA-status</span><strong>${escapeHtml(qaStatus)}</strong></div>
       </div>
       <h3 style="margin-top:16px">Gebruikte input</h3>
@@ -511,6 +525,7 @@ function renderPage(data) {
         <h2>Pakketregels</h2>
         <span class="pill">${data.lines.length} regels</span>
       </div>
+      ${data.lines.length === 0 ? `<div class="governance">Deze run laat alleen tasks/checks zien. Er zijn voor deze add-on geen productregels gegenereerd.</div>` : ''}
       <table>
         <thead>
           <tr>
@@ -616,7 +631,7 @@ function renderPage(data) {
           <h2>Tasks en checks</h2>
           <span class="pill">${data.tasks.length} tasks</span>
         </div>
-        <div class="governance">Persoonlijke en administratieve readiness kan hier als task/check terugkomen. Denk aan documenten, contacten, sleutels, cash, laders, medicatie of andere checks die we bewust niet als generiek productitem genereren.</div>
+        <div class="governance">Persoonlijke en administratieve readiness kan hier als task/check terugkomen. Denk aan documenten, contacten, sleutels, cash, laders, medicatie of andere checks die we bewust niet als generiek productitem genereren. Profielinput en duur blijven zichtbaar in de runcontext hierboven.</div>
         <table>
           <thead><tr><th>Task</th><th>Need</th><th>Priority</th><th>Public note</th><th>Internal note</th></tr></thead>
           <tbody>
@@ -661,8 +676,13 @@ async function handleRequest(req, res) {
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
     const addonParam = url.searchParams.get('addon');
-    const addon = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie'].includes(addonParam) ? addonParam : 'stroomuitval';
-    const data = await loadRecommendationData(inputForSelection(tier, addon));
+    const addon = ALLOWED_ADDONS.includes(addonParam) ? addonParam : 'stroomuitval';
+    const data = await loadRecommendationData(inputForSelection(tier, addon, {
+      household_adults: url.searchParams.get('adults'),
+      household_children: url.searchParams.get('children'),
+      household_pets: url.searchParams.get('pets'),
+      duration_hours: url.searchParams.get('duration_hours'),
+    }));
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));
   } catch (error) {
