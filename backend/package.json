@@ -14,7 +14,8 @@
     "test:evacuatie-poc": "node regression_evacuatie_poc.js",
     "test:taken-profielen-poc": "node regression_taken_profielen_poc.js",
     "test:engine-hardening-poc": "node regression_engine_hardening_poc.js",
-    "test:backoffice-hardening-poc": "node regression_backoffice_hardening_poc.js"
+    "test:backoffice-hardening-poc": "node regression_backoffice_hardening_poc.js",
+    "test:ui-mvp-poc": "node regression_ui_mvp_poc.js"
   },
   "dependencies": {
     "pg": "^8.13.0"

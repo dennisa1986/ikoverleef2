@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
-const { loadRecommendationOutputForInput } = require('../../backend/calculate');
+const { loadRecommendationOutputForInput, main: calculateRecommendation } = require('../../backend/calculate');
 const { loadBackofficeData } = require('../../backend/backoffice_queries');
 
 const PORT = Number(process.env.PORT || 4173);
@@ -40,6 +40,30 @@ const ADDON_PRESETS = [
   { slugs: ['evacuatie', 'stroomuitval'], label: 'Evacuatie + Stroomuitval' },
   { slugs: ['drinkwater', 'taken_profielen'], label: 'Drinkwater + Taken/Profielen' },
   { slugs: ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie', 'taken_profielen'], label: 'MVP stressrun' },
+];
+
+const MVP_ADDONS = [
+  { slug: 'stroomuitval', label: 'Stroomuitval', note: 'Licht, laden en informatie.' },
+  { slug: 'drinkwater', label: 'Drinkwater', note: 'Voorraad en behandeling.' },
+  { slug: 'voedsel_bereiding', label: 'Voedsel', note: 'Voedselzekerheid en bereiding.' },
+  { slug: 'hygiene_sanitatie_afval', label: 'Hygiene', note: 'Reiniging, sanitatie en afval.' },
+  { slug: 'ehbo_persoonlijke_zorg', label: 'EHBO', note: 'Wondzorg en persoonlijke zorg.' },
+  { slug: 'warmte_droog_shelter_light', label: 'Warmte/droog', note: 'Warmtebehoud en droog blijven.' },
+  { slug: 'evacuatie', label: 'Evacuatie', note: 'Dragen, signaleren en documenten.' },
+  { slug: 'taken_profielen', label: 'Taken', note: 'Checks naast producten.' },
+];
+
+const MVP_PRESETS = [
+  {
+    slug: 'mvp_start',
+    label: 'Aanbevolen MVP-start',
+    addon_slugs: ['stroomuitval', 'drinkwater', 'evacuatie'],
+  },
+  {
+    slug: 'complete_72h',
+    label: 'Complete 72u POC',
+    addon_slugs: ALLOWED_ADDONS,
+  },
 ];
 
 function parsePositiveInt(value, fallback) {
@@ -124,6 +148,28 @@ async function loadRecommendationData(input) {
     return await loadRecommendationOutputForInput(client, input);
   } finally {
     await client.end();
+  }
+}
+
+async function ensureRecommendationData(input) {
+  try {
+    return await loadRecommendationData(input);
+  } catch (error) {
+    if (!String(error.message || '').includes('Geen recommendation_run gevonden')) {
+      throw error;
+    }
+
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    console.log = () => {};
+    console.warn = () => {};
+    try {
+      await calculateRecommendation(input, { throwOnError: true });
+    } finally {
+      console.log = originalLog;
+      console.warn = originalWarn;
+    }
+    return loadRecommendationData(input);
   }
 }
 
@@ -539,6 +585,347 @@ function renderBackofficePage(data, domain = 'all') {
 </html>`;
 }
 
+function mvpInputFromSearchParams(params) {
+  const addonValues = params.getAll('addons').filter(Boolean);
+  const addonValue = addonValues.length ? addonValues.join(',') : (params.get('addon') || MVP_PRESETS[0].addon_slugs.join(','));
+  const input = inputForSelection(params.get('tier') || 'basis_plus', addonValue, {
+    household_adults: params.get('adults'),
+    household_children: params.get('children'),
+    household_pets: params.get('pets'),
+    duration_hours: params.get('duration_hours'),
+  });
+  input.duration_hours = Math.max(24, Number(input.duration_hours) || 72);
+  return input;
+}
+
+function mvpQueryForInput(input) {
+  return new URLSearchParams({
+    package: input.package_slug,
+    tier: input.tier_slug,
+    addons: input.addon_slugs.join(','),
+    adults: String(input.household_adults),
+    children: String(input.household_children),
+    pets: String(input.household_pets),
+    duration_hours: String(input.duration_hours),
+  }).toString();
+}
+
+function sectionDescription(key) {
+  switch (key) {
+    case 'core_items': return 'Essentiele items voor primaire dekking.';
+    case 'accessories': return 'Benodigdheden die gekozen oplossingen bruikbaar maken.';
+    case 'supporting_items': return 'Ondersteunend: nuttig, maar geen vervanging van primaire dekking.';
+    case 'backup_items': return 'Reserve of fallback, met beperkingen in de uitleg.';
+    case 'optional_additions': return 'Ruimte voor latere uitbreidingen. Mag nu leeg zijn.';
+    default: return '';
+  }
+}
+
+function renderMvpStyles() {
+  return `
+    :root {
+      --bg: #f4f6f4;
+      --panel: #ffffff;
+      --text: #1d2521;
+      --muted: #5d6a64;
+      --line: #d7ddd8;
+      --accent: #19675d;
+      --accent-soft: #e4f1ee;
+      --warn: #995b13;
+      --warn-soft: #fff4e5;
+      --ink: #17201d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.5; }
+    header { background: var(--ink); color: white; padding: 24px 32px; }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px 32px 48px; }
+    h1, h2, h3 { margin: 0; letter-spacing: 0; }
+    h1 { font-size: 26px; }
+    h2 { font-size: 19px; }
+    h3 { font-size: 16px; }
+    a { color: var(--accent); }
+    .subtle { color: var(--muted); }
+    header .subtle { color: #c7d3cf; margin-top: 6px; }
+    .band { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 18px; padding: 18px; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    label { display: block; font-weight: 700; margin-bottom: 6px; }
+    input, select { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 10px 11px; font: inherit; background: white; color: var(--text); }
+    .choice { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fbfcfb; min-height: 92px; }
+    .choice input { width: auto; margin-right: 8px; }
+    .choice strong { display: inline-block; margin-bottom: 4px; }
+    .preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .button { display: inline-block; border: 0; border-radius: 6px; background: var(--accent); color: white; padding: 11px 15px; text-decoration: none; font-weight: 700; cursor: pointer; font: inherit; }
+    .button.secondary { background: white; color: var(--accent); border: 1px solid var(--accent); }
+    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font-size: 12px; margin: 0 6px 6px 0; background: white; }
+    .pill.good { border-color: #9dcbc3; background: var(--accent-soft); color: var(--accent); }
+    .pill.warn { border-color: #efc27c; background: var(--warn-soft); color: var(--warn); }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .metric { border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; background: #fbfcfb; }
+    .metric span { display: block; color: var(--muted); font-size: 12px; }
+    .metric strong { display: block; font-size: 22px; margin-top: 2px; }
+    .item-card { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: #fbfcfb; margin-top: 10px; }
+    .item-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+    .qty { min-width: 48px; text-align: center; border-radius: 6px; background: var(--accent-soft); color: var(--accent); padding: 6px 8px; font-weight: 700; }
+    details { border: 1px solid var(--line); border-radius: 6px; margin-top: 10px; padding: 10px 12px; background: white; }
+    summary { cursor: pointer; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 7px; text-align: left; vertical-align: top; }
+    th { background: #eef2ef; font-size: 12px; text-transform: uppercase; }
+    .notice { border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px; border-radius: 4px; }
+    .empty { color: var(--muted); padding: 12px; border: 1px dashed var(--line); border-radius: 6px; background: #fbfcfb; }
+    @media (max-width: 760px) { main, header { padding-left: 16px; padding-right: 16px; } .item-top { display: block; } .qty { display: inline-block; margin-top: 8px; } }
+  `;
+}
+
+function renderMvpConfiguratorPage(input = DEFAULT_POC_INPUT) {
+  const selected = new Set(input.addon_slugs || []);
+  const presetLinks = MVP_PRESETS.map((preset) => {
+    const presetInput = { ...input, addon_slugs: preset.addon_slugs };
+    return `<a class="button secondary" href="/mvp?${mvpQueryForInput(presetInput)}">${escapeHtml(preset.label)}</a>`;
+  }).join('');
+
+  return `<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ik overleef - MVP configurator</title>
+  <style>${renderMvpStyles()}</style>
+</head>
+<body>
+  <header>
+    <h1>Ik overleef</h1>
+    <div class="subtle">Stel een praktisch noodpakketadvies samen op basis van bestaande scenario's.</div>
+  </header>
+  <main>
+    <form class="band" method="get" action="/mvp/recommendation">
+      <div class="section-head">
+        <h2>Configurator</h2>
+        <span class="pill good">MVP</span>
+      </div>
+      <input type="hidden" name="package" value="basispakket">
+      <div class="form-grid">
+        <div>
+          <label for="tier">Pakketniveau</label>
+          <select id="tier" name="tier">
+            <option value="basis" ${input.tier_slug === 'basis' ? 'selected' : ''}>Basis</option>
+            <option value="basis_plus" ${input.tier_slug === 'basis_plus' ? 'selected' : ''}>Basis+</option>
+          </select>
+        </div>
+        <div>
+          <label for="adults">Volwassenen</label>
+          <input id="adults" name="adults" type="number" min="1" step="1" value="${escapeHtml(input.household_adults)}">
+        </div>
+        <div>
+          <label for="children">Kinderen</label>
+          <input id="children" name="children" type="number" min="0" step="1" value="${escapeHtml(input.household_children)}">
+        </div>
+        <div>
+          <label for="pets">Huisdieren</label>
+          <input id="pets" name="pets" type="number" min="0" step="1" value="${escapeHtml(input.household_pets)}">
+        </div>
+        <div>
+          <label for="duration_hours">Duur in uren</label>
+          <input id="duration_hours" name="duration_hours" type="number" min="24" step="24" value="${escapeHtml(input.duration_hours)}">
+        </div>
+      </div>
+      <h3 style="margin-top:18px">Add-ons</h3>
+      <div class="grid" style="margin-top:10px">
+        ${MVP_ADDONS.map((addon) => `
+          <label class="choice">
+            <input type="checkbox" name="addons" value="${escapeHtml(addon.slug)}" ${selected.has(addon.slug) ? 'checked' : ''}>
+            <strong>${escapeHtml(addon.label)}</strong>
+            <div class="subtle">${escapeHtml(addon.note)}</div>
+          </label>`).join('')}
+      </div>
+      <div class="preset-row">
+        ${presetLinks}
+      </div>
+      <div style="margin-top:18px">
+        <button class="button" type="submit">Advies bekijken</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>`;
+}
+
+function renderMvpItemCard(line, sectionKey) {
+  return `
+    <article class="item-card">
+      <div class="item-top">
+        <div>
+          <h3>${escapeHtml(line.title)}</h3>
+          <div style="margin-top:6px">
+            <span class="pill good">${escapeHtml(sectionTitle(sectionKey))}</span>
+            <span class="pill">${escapeHtml(line.runtime_role)}</span>
+          </div>
+        </div>
+        <div class="qty">x${escapeHtml(line.quantity)}</div>
+      </div>
+      <p>${escapeHtml(line.explanation_public)}</p>
+      <details>
+        <summary>Uitleg en details</summary>
+        <p class="subtle">SKU: ${escapeHtml(line.sku)}</p>
+        <h3>Bronnen</h3>
+        <table>
+          <thead><tr><th>Need</th><th>Type</th><th>Uitleg</th></tr></thead>
+          <tbody>
+            ${line.sources.map((src) => `<tr><td>${escapeHtml(src.scenario_need || '')}</td><td>${escapeHtml(src.source_type)}</td><td>${escapeHtml(src.explanation || '')}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        <h3 style="margin-top:12px">Dekking</h3>
+        <table>
+          <thead><tr><th>Need</th><th>Capability</th><th>Sterkte</th><th>Status</th></tr></thead>
+          <tbody>
+            ${line.coverage.map((cov) => `<tr><td>${escapeHtml(cov.need)}</td><td>${escapeHtml(cov.capability)}</td><td>${escapeHtml(cov.coverage_strength)}</td><td>${fmtBool(cov.counted_as_sufficient)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        ${line.usage_constraints.length ? `
+          <h3 style="margin-top:12px">Waarschuwingen</h3>
+          <table>
+            <thead><tr><th>Type</th><th>Waarschuwing</th></tr></thead>
+            <tbody>
+              ${line.usage_constraints.map((rule) => `<tr><td>${escapeHtml(rule.constraint_type)}</td><td>${escapeHtml(rule.public_warning)}</td></tr>`).join('')}
+            </tbody>
+          </table>` : ''}
+      </details>
+    </article>`;
+}
+
+function renderMvpSection(data, key) {
+  const lines = data.sections[key] || [];
+  return `
+    <section class="band">
+      <div class="section-head">
+        <div>
+          <h2>${sectionTitle(key)}</h2>
+          <div class="subtle">${escapeHtml(sectionDescription(key))}</div>
+        </div>
+        <span class="pill ${lines.length ? 'good' : ''}">${lines.length}</span>
+      </div>
+      ${lines.length ? lines.map((line) => renderMvpItemCard(line, key)).join('') : '<div class="empty">Deze sectie is leeg voor deze adviesrun.</div>'}
+    </section>`;
+}
+
+function renderMvpTasks(data) {
+  return `
+    <section class="band">
+      <div class="section-head">
+        <h2>Tasks</h2>
+        <span class="pill ${data.tasks.length ? 'good' : ''}">${data.tasks.length}</span>
+      </div>
+      ${data.tasks.length ? data.tasks.map((task) => `
+        <article class="item-card">
+          <h3>${escapeHtml(task.title)}</h3>
+          <p>${escapeHtml(task.description_public)}</p>
+          <div class="subtle">${escapeHtml(task.need_slug)} · priority ${escapeHtml(task.priority)}</div>
+        </article>`).join('') : '<div class="empty">Geen tasks voor deze run.</div>'}
+    </section>`;
+}
+
+function renderMvpWarnings(data) {
+  return `
+    <section class="band">
+      <div class="section-head">
+        <h2>Warnings</h2>
+        <span class="pill ${data.warnings.length ? 'warn' : 'good'}">${data.warnings.length}</span>
+      </div>
+      ${data.warnings.length ? data.warnings.slice(0, 80).map((warning) => `
+        <div class="notice" style="margin-top:10px">
+          <strong>${escapeHtml(warning.item_title || warning.warning_type)}</strong>
+          <div>${escapeHtml(warning.public_warning || warning.internal_notes || '')}</div>
+        </div>`).join('') : '<div class="empty">Geen warnings voor deze run.</div>'}
+    </section>`;
+}
+
+function renderMvpRecommendationPage(data) {
+  const query = mvpQueryForInput(data.input);
+  const counts = {
+    core: data.sections.core_items.length,
+    accessories: data.sections.accessories.length,
+    supporting: data.sections.supporting_items.length,
+    backup: data.sections.backup_items.length,
+    optional: data.sections.optional_additions.length,
+    tasks: data.tasks.length,
+    warnings: data.warnings.length,
+  };
+
+  return `<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ik overleef - advies</title>
+  <style>${renderMvpStyles()}</style>
+</head>
+<body>
+  <header>
+    <h1>Je pakketadvies</h1>
+    <div class="subtle">Gebaseerd op bestaande scenario's, productregels, tasks, warnings en QA-output.</div>
+  </header>
+  <main>
+    <section class="band">
+      <div class="section-head">
+        <h2>Samenvatting</h2>
+        <span class="pill ${data.qa_summary.status === 'clean' ? 'good' : 'warn'}">QA ${escapeHtml(data.qa_summary.status)}</span>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>Pakket</span><strong>${escapeHtml(data.input.package_slug)}</strong></div>
+        <div class="metric"><span>Niveau</span><strong>${escapeHtml(data.input.tier_slug)}</strong></div>
+        <div class="metric"><span>Add-ons</span><strong>${data.input.addon_slugs.length}</strong></div>
+        <div class="metric"><span>Volwassenen</span><strong>${escapeHtml(data.input.household_adults)}</strong></div>
+        <div class="metric"><span>Kinderen</span><strong>${escapeHtml(data.input.household_children)}</strong></div>
+        <div class="metric"><span>Huisdieren</span><strong>${escapeHtml(data.input.household_pets)}</strong></div>
+        <div class="metric"><span>Duur</span><strong>${escapeHtml(data.input.duration_hours)}u</strong></div>
+        <div class="metric"><span>Core</span><strong>${counts.core}</strong></div>
+        <div class="metric"><span>Accessoires</span><strong>${counts.accessories}</strong></div>
+        <div class="metric"><span>Supporting</span><strong>${counts.supporting}</strong></div>
+        <div class="metric"><span>Backup</span><strong>${counts.backup}</strong></div>
+        <div class="metric"><span>Tasks</span><strong>${counts.tasks}</strong></div>
+        <div class="metric"><span>Warnings</span><strong>${counts.warnings}</strong></div>
+      </div>
+      <div style="margin-top:12px">
+        ${data.input.addon_slugs.map((slug) => `<span class="pill good">${escapeHtml(slug)}</span>`).join('')}
+      </div>
+      <div style="margin-top:16px">
+        <a class="button secondary" href="/mvp?${query}">Keuzes aanpassen</a>
+        <a class="button secondary" href="/internal/backoffice-poc">Interne backoffice bekijken</a>
+      </div>
+    </section>
+
+    ${renderMvpSection(data, 'core_items')}
+    ${renderMvpSection(data, 'accessories')}
+    ${renderMvpSection(data, 'supporting_items')}
+    ${renderMvpSection(data, 'backup_items')}
+    ${renderMvpSection(data, 'optional_additions')}
+    ${renderMvpTasks(data)}
+    ${renderMvpWarnings(data)}
+
+    <section class="band">
+      <div class="section-head">
+        <h2>QA summary</h2>
+        <span class="pill ${data.qa_summary.status === 'clean' ? 'good' : 'warn'}">${escapeHtml(data.qa_summary.status)}</span>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>blocking</span><strong>${data.qa_summary.blocking_total}</strong></div>
+        <div class="metric"><span>warning/context</span><strong>${data.qa_summary.warning_total}</strong></div>
+        <div class="metric"><span>without sources</span><strong>${data.qa_summary.generated_lines_without_sources}</strong></div>
+        <div class="metric"><span>type mismatch</span><strong>${data.qa_summary.generated_line_producttype_mismatch}</strong></div>
+      </div>
+      <details>
+        <summary>Debug run details</summary>
+        <p>Run ID: ${escapeHtml(data.run.id)}</p>
+        <p>Actieve add-ons: ${data.input.addon_slugs.map((slug) => escapeHtml(slug)).join(', ')}</p>
+      </details>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
 function renderPage(data) {
   const currentAddonValue = data.input.addon_slugs.join(',');
   const querySuffix = `&adults=${encodeURIComponent(data.input.household_adults)}&children=${encodeURIComponent(data.input.household_children)}&pets=${encodeURIComponent(data.input.household_pets)}&duration_hours=${encodeURIComponent(data.input.duration_hours)}`;
@@ -777,7 +1164,7 @@ async function handleRequest(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/') {
-      res.writeHead(302, { Location: '/internal/recommendation-poc' });
+      res.writeHead(302, { Location: '/mvp' });
       res.end();
       return;
     }
@@ -795,6 +1182,20 @@ async function handleRequest(req, res) {
       const data = await loadBackofficePocData();
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(renderBackofficePage(data, domain));
+      return;
+    }
+
+    if (url.pathname === '/mvp') {
+      const dataInput = mvpInputFromSearchParams(url.searchParams);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderMvpConfiguratorPage(dataInput));
+      return;
+    }
+
+    if (url.pathname === '/mvp/recommendation') {
+      const data = await ensureRecommendationData(mvpInputFromSearchParams(url.searchParams));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderMvpRecommendationPage(data));
       return;
     }
 
@@ -825,13 +1226,18 @@ if (require.main === module) {
   http.createServer(handleRequest).listen(PORT, HOST, () => {
     console.log(`Internal recommendation POC: http://${HOST}:${PORT}/internal/recommendation-poc`);
     console.log(`Internal backoffice POC: http://${HOST}:${PORT}/internal/backoffice-poc`);
+    console.log(`MVP configurator: http://${HOST}:${PORT}/mvp`);
   });
 }
 
 module.exports = {
   inputForSelection,
   loadRecommendationData,
+  ensureRecommendationData,
   loadBackofficePocData,
+  mvpInputFromSearchParams,
+  renderMvpConfiguratorPage,
+  renderMvpRecommendationPage,
   renderBackofficePage,
   handleRequest,
 };
