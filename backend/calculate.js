@@ -25,6 +25,28 @@ const DEFAULT_INPUT = {
   household_pets: 0,
 };
 
+const BLOCKING_QA_VIEWS = [
+  'qa_active_scenarios_without_needs',
+  'qa_active_needs_without_capabilities',
+  'qa_scenario_needs_without_product_rules',
+  'qa_product_types_without_capabilities',
+  'qa_active_items_without_capabilities',
+  'qa_variant_item_product_type_mismatch',
+  'qa_default_candidate_conflicts',
+  'qa_items_with_claimed_primary_coverage',
+  'qa_required_accessories_missing_candidate_items',
+  'qa_active_consumables_without_quantity_policy',
+  'qa_claim_governance_scope_invalid',
+  'qa_quantity_policy_invalid_scope',
+];
+
+const WARNING_QA_VIEWS = [
+  'qa_active_accessory_items_without_capabilities',
+  'qa_supplier_offers_stale',
+  'qa_evacuation_items_without_physical_specs',
+  'qa_weather_items_without_environmental_specs',
+];
+
 function inputFromEnvironment() {
   const input = { ...DEFAULT_INPUT };
   const args = Object.fromEntries(
@@ -541,6 +563,426 @@ function internalExplanationForLine(line, selectionScore) {
   return parts.join('; ');
 }
 
+function rowsByLine(rows) {
+  return rows.reduce((acc, row) => {
+    if (!acc.has(row.line_id)) acc.set(row.line_id, []);
+    acc.get(row.line_id).push(row);
+    return acc;
+  }, new Map());
+}
+
+async function countView(client, viewName) {
+  const result = await client.query(`SELECT count(*)::int AS records FROM ${viewName}`);
+  return { view: viewName, records: result.rows[0].records };
+}
+
+async function latestRunWithExactAddons(client, input) {
+  const addonCount = input.addon_slugs.length;
+  const result = await client.query(
+    `SELECT rr.id
+       FROM recommendation_run rr
+       JOIN package p ON p.id = rr.package_id
+       JOIN tier t ON t.id = rr.tier_id
+      WHERE p.slug = $1
+        AND t.slug = $2
+        AND rr.duration_hours = $3
+        AND rr.household_adults = $4
+        AND rr.household_children = $5
+        AND rr.household_pets = $6
+        AND (
+          SELECT count(DISTINCT a.slug)
+            FROM recommendation_run_addon rra
+            JOIN addon a ON a.id = rra.addon_id
+           WHERE rra.recommendation_run_id = rr.id
+             AND a.slug = ANY($7)
+        ) = $8
+        AND (
+          SELECT count(*)
+            FROM recommendation_run_addon rra
+           WHERE rra.recommendation_run_id = rr.id
+        ) = $8
+      ORDER BY rr.created_at DESC
+      LIMIT 1`,
+    [
+      input.package_slug,
+      input.tier_slug,
+      input.duration_hours,
+      input.household_adults,
+      input.household_children,
+      input.household_pets,
+      input.addon_slugs,
+      addonCount,
+    ],
+  );
+
+  if (!result.rows.length) {
+    throw new Error(`Geen recommendation_run gevonden voor addons=${input.addon_slugs.join(',')} tier=${input.tier_slug}`);
+  }
+
+  return result.rows[0].id;
+}
+
+function runtimeRoleForLine(line) {
+  const needs = new Set((line.sources || []).map((src) => src.scenario_need).filter(Boolean));
+  const strengths = new Set((line.coverage || []).map((row) => row.coverage_strength).filter(Boolean));
+  const anySufficient = (line.coverage || []).some((row) => row.counted_as_sufficient);
+  const primarySufficient = (line.coverage || []).some((row) => row.counted_as_sufficient && row.coverage_strength === 'primary');
+  const internal = String(line.explanation_internal || '').toLowerCase();
+
+  const accessoryProductTypes = new Set([
+    'handmatige-blikopener',
+    'multitool-met-blikopener',
+    'gascartouche',
+    'ontsteking',
+    'kookvat',
+    'sanitair-absorptiemiddel',
+    'zipbags',
+    'nitril-handschoenen',
+    'verbandtape',
+    'paracord',
+    'tarp-haringen',
+    'batterijen-aa',
+    'batterijen-aaa',
+    'usb-c-kabelset',
+  ]);
+  const supportingProductTypes = new Set([
+    'buitenkooktoestel-gas',
+    'thermometer',
+    'tarp-light',
+    'grondzeil',
+  ]);
+  const backupProductTypes = new Set([
+    'waterfilter',
+    'waterzuiveringstabletten',
+    'filterfles',
+    'nooddeken',
+    'noodbivvy',
+  ]);
+
+  if (
+    line.is_accessory ||
+    (line.sources || []).some((src) => src.source_type === 'accessory_requirement') ||
+    accessoryProductTypes.has(line.product_type_slug)
+  ) {
+    return 'accessory';
+  }
+
+  if (
+    backupProductTypes.has(line.product_type_slug) ||
+    strengths.has('backup') ||
+    internal.includes('backup')
+  ) {
+    return 'backup';
+  }
+
+  if (
+    supportingProductTypes.has(line.product_type_slug) ||
+    needs.has('voedsel-verwarmen-ondersteunend') ||
+    needs.has('temperatuur-controleren') ||
+    ((!primarySufficient) && (strengths.has('secondary') || strengths.has('comfort'))) ||
+    (!anySufficient && line.is_core_line === false)
+  ) {
+    return 'supporting';
+  }
+
+  return 'core';
+}
+
+function runtimeSectionForLine(line) {
+  switch (runtimeRoleForLine(line)) {
+    case 'accessory': return 'accessories';
+    case 'supporting': return 'supporting_items';
+    case 'backup': return 'backup_items';
+    case 'optional': return 'optional_additions';
+    case 'core':
+    default:
+      return 'core_items';
+  }
+}
+
+function buildSections(lines) {
+  const sections = {
+    core_items: [],
+    accessories: [],
+    supporting_items: [],
+    backup_items: [],
+    optional_additions: [],
+  };
+
+  for (const line of lines) {
+    sections[runtimeSectionForLine(line)].push(line);
+  }
+
+  return sections;
+}
+
+function governanceWarningsForLine(line) {
+  return String(line.explanation_internal || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part.startsWith('governance='))
+    .map((part) => ({
+      line_id: line.id,
+      sku: line.sku,
+      item_title: line.title,
+      warning_type: 'governance_note',
+      severity: 'info',
+      public_warning: part.replace(/^governance=/, '').trim(),
+      internal_notes: String(line.explanation_internal || ''),
+      blocks_recommendation: false,
+      source: 'governance_note',
+    }));
+}
+
+function buildWarnings(lines, warningQa) {
+  const warnings = [];
+  const seen = new Set();
+
+  function pushWarning(entry) {
+    const key = [
+      entry.line_id || '',
+      entry.warning_type || '',
+      entry.source || '',
+      entry.public_warning || '',
+      entry.internal_notes || '',
+    ].join('::');
+    if (seen.has(key)) return;
+    seen.add(key);
+    warnings.push(entry);
+  }
+
+  for (const line of lines) {
+    for (const rule of line.usage_constraints || []) {
+      pushWarning({
+        line_id: line.id,
+        sku: line.sku,
+        item_title: line.title,
+        warning_type: rule.constraint_type,
+        severity: rule.severity,
+        public_warning: rule.public_warning,
+        internal_notes: rule.internal_notes,
+        blocks_recommendation: rule.blocks_recommendation,
+        source: 'item_usage_constraint',
+      });
+    }
+
+    for (const warning of governanceWarningsForLine(line)) {
+      pushWarning(warning);
+    }
+  }
+
+  for (const row of warningQa.filter((entry) => entry.records > 0)) {
+    pushWarning({
+      line_id: null,
+      sku: '',
+      item_title: '',
+      warning_type: row.view,
+      severity: 'context',
+      public_warning: `QA context view ${row.view} heeft ${row.records} records.`,
+      internal_notes: 'Bestaande QA-contextview; controleer data of seedkwaliteit indien relevant.',
+      blocks_recommendation: false,
+      source: 'qa_context',
+    });
+  }
+
+  return warnings;
+}
+
+function buildQaSummary(blockingQa, warningQa, generatedQa) {
+  const blockingTotal = blockingQa.reduce((sum, row) => sum + row.records, 0);
+  const warningTotal = warningQa.reduce((sum, row) => sum + row.records, 0);
+  const generatedWithoutSources = generatedQa.withoutSources.records;
+  const generatedProductTypeMismatch = generatedQa.productTypeMismatch.records;
+
+  return {
+    blocking_total: blockingTotal,
+    warning_total: warningTotal,
+    generated_lines_without_sources: generatedWithoutSources,
+    generated_line_producttype_mismatch: generatedProductTypeMismatch,
+    status: blockingTotal === 0 && generatedWithoutSources === 0 && generatedProductTypeMismatch === 0
+      ? 'clean'
+      : 'attention',
+    blocking_views: blockingQa,
+    warning_views: warningQa,
+  };
+}
+
+async function loadTasksForRun(client, runId) {
+  const result = await client.query(
+    `WITH run_context AS (
+        SELECT rr.id, rr.package_id
+          FROM recommendation_run rr
+         WHERE rr.id = $1
+      ),
+      active_scenarios AS (
+        SELECT ps.scenario_id
+          FROM package_scenario ps
+          JOIN run_context rc ON rc.package_id = ps.package_id
+        UNION
+        SELECT ag.scenario_id
+          FROM recommendation_run_addon rra
+          JOIN addon_scenario ag ON ag.addon_id = rra.addon_id
+          JOIN run_context rc ON rc.id = rra.recommendation_run_id
+      )
+      SELECT pt.task_slug, pt.title, pt.description_public, pt.internal_notes,
+             pt.priority, pt.requires_completion, n.slug AS need_slug
+        FROM preparedness_task pt
+        JOIN scenario_need sn ON sn.id = pt.scenario_need_id
+        JOIN need n ON n.id = sn.need_id
+        JOIN active_scenarios act ON act.scenario_id = sn.scenario_id
+       WHERE pt.status = 'active'
+       ORDER BY pt.priority, pt.task_slug`,
+    [runId],
+  );
+  return result.rows;
+}
+
+async function loadRecommendationOutput(client, runId, inputOverride = null) {
+  const runResult = await client.query(
+    `SELECT rr.id, rr.status, rr.duration_hours, rr.household_adults,
+            rr.household_children, rr.household_pets, rr.created_at,
+            p.slug AS package_slug, p.name AS package_name,
+            t.slug AS tier_slug, t.name AS tier_name,
+            COALESCE(
+              json_agg(json_build_object('slug', a.slug, 'name', a.name) ORDER BY a.slug)
+              FILTER (WHERE a.id IS NOT NULL),
+              '[]'::json
+            ) AS addons
+       FROM recommendation_run rr
+       JOIN package p ON p.id = rr.package_id
+       JOIN tier t ON t.id = rr.tier_id
+       LEFT JOIN recommendation_run_addon rra ON rra.recommendation_run_id = rr.id
+       LEFT JOIN addon a ON a.id = rra.addon_id
+      WHERE rr.id = $1
+      GROUP BY rr.id, p.id, t.id`,
+    [runId],
+  );
+  if (!runResult.rows.length) {
+    throw new Error(`recommendation_run ${runId} niet gevonden`);
+  }
+
+  const run = runResult.rows[0];
+  const linesResult = await client.query(
+    `SELECT gpl.id, gpl.item_id, i.title, i.sku, gpl.quantity, gpl.is_accessory, gpl.is_core_line,
+            gpl.selection_score, gpl.explanation_public, gpl.explanation_internal,
+            pt.slug AS product_type_slug,
+            COALESCE(n.slug, '') AS primary_reason,
+            (SELECT count(*)::int FROM generated_line_source gls WHERE gls.generated_package_line_id = gpl.id) AS source_count,
+            (SELECT count(*)::int FROM generated_line_coverage glc WHERE glc.generated_package_line_id = gpl.id) AS coverage_count
+       FROM generated_package_line gpl
+       JOIN item i ON i.id = gpl.item_id
+       JOIN product_type pt ON pt.id = gpl.product_type_id
+       LEFT JOIN scenario_need sn ON sn.id = gpl.primary_reason_scenario_need_id
+       LEFT JOIN need n ON n.id = sn.need_id
+      WHERE gpl.recommendation_run_id = $1
+      ORDER BY gpl.is_accessory ASC, i.title ASC`,
+    [runId],
+  );
+
+  const usageConstraintsResult = await client.query(
+    `SELECT gpl.id AS line_id, iuc.constraint_type, iuc.severity,
+            iuc.public_warning, iuc.internal_notes, iuc.blocks_recommendation
+       FROM generated_package_line gpl
+       JOIN item_usage_constraint iuc ON iuc.item_id = gpl.item_id AND iuc.status = 'active'
+      WHERE gpl.recommendation_run_id = $1
+      ORDER BY gpl.id, iuc.severity DESC, iuc.constraint_type`,
+    [runId],
+  );
+
+  const sourcesResult = await client.query(
+    `SELECT gpl.id AS line_id, gls.source_type, n.slug AS scenario_need,
+            parent_i.title AS parent_item, gls.explanation
+       FROM generated_line_source gls
+       JOIN generated_package_line gpl ON gpl.id = gls.generated_package_line_id
+       LEFT JOIN scenario_need sn ON sn.id = gls.scenario_need_id
+       LEFT JOIN need n ON n.id = sn.need_id
+       LEFT JOIN generated_package_line parent_gpl ON parent_gpl.id = gls.parent_generated_package_line_id
+       LEFT JOIN item parent_i ON parent_i.id = parent_gpl.item_id
+      WHERE gpl.recommendation_run_id = $1
+      ORDER BY gpl.id, gls.source_type, parent_i.title`,
+    [runId],
+  );
+
+  const coverageResult = await client.query(
+    `SELECT gpl.id AS line_id, n.slug AS need, c.slug AS capability,
+            glc.coverage_strength, glc.counted_as_sufficient, glc.notes
+       FROM generated_line_coverage glc
+       JOIN generated_package_line gpl ON gpl.id = glc.generated_package_line_id
+       JOIN scenario_need sn ON sn.id = glc.scenario_need_id
+       JOIN need n ON n.id = sn.need_id
+       JOIN capability c ON c.id = glc.capability_id
+      WHERE gpl.recommendation_run_id = $1
+      ORDER BY gpl.id, n.slug, c.slug`,
+    [runId],
+  );
+
+  const tasks = await loadTasksForRun(client, runId);
+
+  const blockingQa = [];
+  for (const view of BLOCKING_QA_VIEWS) {
+    blockingQa.push(await countView(client, view));
+  }
+
+  const warningQa = [];
+  for (const view of WARNING_QA_VIEWS) {
+    warningQa.push(await countView(client, view));
+  }
+
+  const generatedQa = {
+    withoutSources: await countView(client, 'qa_generated_lines_without_sources'),
+    productTypeMismatch: await countView(client, 'qa_generated_line_product_type_mismatch'),
+  };
+
+  const sourcesByLine = rowsByLine(sourcesResult.rows);
+  const coverageByLine = rowsByLine(coverageResult.rows);
+  const usageByLine = rowsByLine(usageConstraintsResult.rows);
+  const lines = linesResult.rows.map((line) => {
+    const enriched = {
+      ...line,
+      sources: sourcesByLine.get(line.id) || [],
+      coverage: coverageByLine.get(line.id) || [],
+      usage_constraints: usageByLine.get(line.id) || [],
+    };
+    enriched.runtime_role = runtimeRoleForLine(enriched);
+    enriched.runtime_section = runtimeSectionForLine(enriched);
+    return enriched;
+  });
+
+  const sections = buildSections(lines);
+  const warnings = buildWarnings(lines, warningQa);
+  const qa_summary = buildQaSummary(blockingQa, warningQa, generatedQa);
+  const input = inputOverride || {
+    package_slug: run.package_slug,
+    tier_slug: run.tier_slug,
+    addon_slugs: run.addons.map((addon) => addon.slug),
+    duration_hours: run.duration_hours,
+    household_adults: run.household_adults,
+    household_children: run.household_children,
+    household_pets: run.household_pets,
+  };
+
+  return {
+    input,
+    run,
+    lines,
+    sections,
+    tasks,
+    warnings,
+    qa_summary,
+    sources: sourcesResult.rows,
+    coverage: coverageResult.rows,
+    usageConstraints: usageConstraintsResult.rows,
+    blockingQa,
+    warningQa,
+    generatedQa,
+  };
+}
+
+async function loadRecommendationOutputForInput(client, input) {
+  const runId = await latestRunWithExactAddons(client, input);
+  return loadRecommendationOutput(client, runId, input);
+}
+
 async function main(inputOverride = null, options = {}) {
   const dbUrl = process.env.IOE_PG_URL;
   if (!dbUrl) {
@@ -1040,5 +1482,13 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_INPUT,
+  BLOCKING_QA_VIEWS,
+  WARNING_QA_VIEWS,
+  countView,
+  latestRunWithExactAddons,
+  loadRecommendationOutput,
+  loadRecommendationOutputForInput,
+  runtimeRoleForLine,
+  runtimeSectionForLine,
   main,
 };

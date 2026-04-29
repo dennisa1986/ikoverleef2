@@ -144,13 +144,18 @@ async function latestRun(client, tierSlug) {
        AND rr.household_adults = 2
        AND rr.household_children = 0
        AND rr.household_pets = 0
-       AND EXISTS (
-         SELECT 1
+       AND (
+         SELECT count(DISTINCT a.slug)
          FROM recommendation_run_addon rra
          JOIN addon a ON a.id = rra.addon_id
          WHERE rra.recommendation_run_id = rr.id
            AND a.slug = 'evacuatie'
-       )
+       ) = 1
+       AND (
+         SELECT count(*)
+         FROM recommendation_run_addon rra
+         WHERE rra.recommendation_run_id = rr.id
+       ) = 1
      ORDER BY rr.created_at DESC
      LIMIT 1`,
     [tierSlug],

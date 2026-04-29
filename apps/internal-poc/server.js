@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
+const { loadRecommendationOutputForInput } = require('../../backend/calculate');
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -18,21 +19,49 @@ const DEFAULT_POC_INPUT = {
   household_pets: 0,
 };
 
-const ALLOWED_ADDONS = ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie', 'taken_profielen'];
+const ALLOWED_ADDONS = [
+  'stroomuitval',
+  'drinkwater',
+  'voedsel_bereiding',
+  'hygiene_sanitatie_afval',
+  'ehbo_persoonlijke_zorg',
+  'warmte_droog_shelter_light',
+  'evacuatie',
+  'taken_profielen',
+];
+
+const ADDON_PRESETS = [
+  { slugs: ['stroomuitval'], label: 'Stroomuitval' },
+  { slugs: ['drinkwater'], label: 'Drinkwater' },
+  { slugs: ['evacuatie'], label: 'Evacuatie' },
+  { slugs: ['taken_profielen'], label: 'Taken/Profielen' },
+  { slugs: ['evacuatie', 'drinkwater'], label: 'Evacuatie + Drinkwater' },
+  { slugs: ['evacuatie', 'stroomuitval'], label: 'Evacuatie + Stroomuitval' },
+  { slugs: ['drinkwater', 'taken_profielen'], label: 'Drinkwater + Taken/Profielen' },
+  { slugs: ['stroomuitval', 'drinkwater', 'voedsel_bereiding', 'hygiene_sanitatie_afval', 'ehbo_persoonlijke_zorg', 'warmte_droog_shelter_light', 'evacuatie', 'taken_profielen'], label: 'MVP stressrun' },
+];
 
 function parsePositiveInt(value, fallback) {
+  if (value === null || value === undefined || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
 }
 
-function inputForSelection(tierSlug, addonSlug, overrides = {}) {
-  const normalizedAddon = ALLOWED_ADDONS.includes(addonSlug)
-    ? addonSlug
-    : 'stroomuitval';
+function normalizeAddonSlugs(value) {
+  const raw = Array.isArray(value) ? value.join(',') : String(value || '');
+  const normalized = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => ALLOWED_ADDONS.includes(part));
+  const unique = [...new Set(normalized)];
+  return unique.length ? unique : ['stroomuitval'];
+}
+
+function inputForSelection(tierSlug, addonValue, overrides = {}) {
   return {
     ...DEFAULT_POC_INPUT,
     tier_slug: tierSlug === 'basis' ? 'basis' : 'basis_plus',
-    addon_slugs: [normalizedAddon],
+    addon_slugs: normalizeAddonSlugs(addonValue),
     duration_hours: parsePositiveInt(overrides.duration_hours, 72),
     household_adults: Math.max(1, parsePositiveInt(overrides.household_adults, DEFAULT_POC_INPUT.household_adults)),
     household_children: parsePositiveInt(overrides.household_children, DEFAULT_POC_INPUT.household_children),
@@ -40,35 +69,13 @@ function inputForSelection(tierSlug, addonSlug, overrides = {}) {
   };
 }
 
-const BLOCKING_QA_VIEWS = [
-  'qa_active_scenarios_without_needs',
-  'qa_active_needs_without_capabilities',
-  'qa_scenario_needs_without_product_rules',
-  'qa_product_types_without_capabilities',
-  'qa_active_items_without_capabilities',
-  'qa_variant_item_product_type_mismatch',
-  'qa_default_candidate_conflicts',
-  'qa_items_with_claimed_primary_coverage',
-  'qa_required_accessories_missing_candidate_items',
-  'qa_active_consumables_without_quantity_policy',
-  'qa_claim_governance_scope_invalid',
-  'qa_quantity_policy_invalid_scope',
-];
-
-const WARNING_QA_VIEWS = [
-  'qa_active_accessory_items_without_capabilities',
-  'qa_supplier_offers_stale',
-  'qa_evacuation_items_without_physical_specs',
-  'qa_weather_items_without_environmental_specs',
-];
-
 function loadLocalEnv() {
   if (!fs.existsSync(ENV_PATH)) return {};
   return Object.fromEntries(
     fs.readFileSync(ENV_PATH, 'utf8')
       .split(/\r?\n/)
-      .filter(line => line && !line.trimStart().startsWith('#') && line.includes('='))
-      .map(line => {
+      .filter((line) => line && !line.trimStart().startsWith('#') && line.includes('='))
+      .map((line) => {
         const idx = line.indexOf('=');
         return [line.slice(0, idx), line.slice(idx + 1)];
       }),
@@ -93,22 +100,15 @@ function fmtBool(value) {
   return value ? 'telt mee' : 'ondersteunend / backup / niet voldoende';
 }
 
-function roleLabel(line) {
-  if (line.is_accessory) return 'accessory';
-  if (line.product_type_slug === 'buitenkooktoestel-gas' || line.primary_reason === 'voedsel-verwarmen-ondersteunend') return 'supporting';
-  if (['sanitair-absorptiemiddel', 'zipbags', 'nitril-handschoenen'].includes(line.product_type_slug)) return 'accessory';
-  if (line.product_type_slug === 'verbandtape') return 'accessory';
-  if (['paracord', 'tarp-haringen'].includes(line.product_type_slug)) return 'accessory';
-  if (line.product_type_slug === 'thermometer' || line.primary_reason === 'temperatuur-controleren') return 'supporting';
-  if (line.product_type_slug === 'nooddeken' || line.primary_reason === 'noodwarmte-backup') return 'supporting';
-  if (line.product_type_slug === 'grondzeil' || line.primary_reason === 'grondvocht-barriere') return 'supporting';
-  if (!line.is_core_line) return 'backup';
-  return 'core';
-}
-
-async function countView(client, viewName) {
-  const result = await client.query(`SELECT count(*)::int AS records FROM ${viewName}`);
-  return { view: viewName, records: result.rows[0].records };
+function sectionTitle(key) {
+  switch (key) {
+    case 'core_items': return 'Core items';
+    case 'accessories': return 'Accessoires';
+    case 'supporting_items': return 'Supporting items';
+    case 'backup_items': return 'Backup items';
+    case 'optional_additions': return 'Optional additions';
+    default: return key;
+  }
 }
 
 async function loadRecommendationData(input) {
@@ -120,218 +120,215 @@ async function loadRecommendationData(input) {
   const client = new Client({ connectionString });
   await client.connect();
   try {
-    const run = await client.query(
-      `SELECT rr.id, rr.status, rr.duration_hours, rr.household_adults,
-              rr.household_children, rr.household_pets, rr.created_at,
-              p.slug AS package_slug, p.name AS package_name,
-              t.slug AS tier_slug, t.name AS tier_name,
-              COALESCE(
-                json_agg(json_build_object('slug', a.slug, 'name', a.name) ORDER BY a.slug)
-                FILTER (WHERE a.id IS NOT NULL),
-                '[]'::json
-              ) AS addons
-         FROM recommendation_run rr
-         JOIN package p ON p.id = rr.package_id
-         JOIN tier t ON t.id = rr.tier_id
-         LEFT JOIN recommendation_run_addon rra ON rra.recommendation_run_id = rr.id
-         LEFT JOIN addon a ON a.id = rra.addon_id
-        WHERE p.slug = $1
-          AND t.slug = $2
-          AND rr.duration_hours = $3
-          AND rr.household_adults = $4
-          AND rr.household_children = $5
-          AND rr.household_pets = $6
-          AND EXISTS (
-            SELECT 1
-            FROM recommendation_run_addon rra_filter
-            JOIN addon a_filter ON a_filter.id = rra_filter.addon_id
-            WHERE rra_filter.recommendation_run_id = rr.id
-              AND a_filter.slug = ANY($7)
-          )
-        GROUP BY rr.id, p.id, t.id
-        ORDER BY rr.created_at DESC
-        LIMIT 1`,
-      [
-        input.package_slug,
-        input.tier_slug,
-        input.duration_hours,
-        input.household_adults,
-        input.household_children,
-        input.household_pets,
-        input.addon_slugs,
-      ],
-    );
-
-    if (!run.rows.length) {
-      throw new Error(`Geen generated recommendation_run gevonden voor tier=${input.tier_slug}, addon=${input.addon_slugs.join(',')}. Draai eerst de recommendation engine voor deze input.`);
-    }
-
-    const runId = run.rows[0].id;
-    const lines = await client.query(
-      `SELECT gpl.id, i.title, i.sku, gpl.quantity, gpl.is_accessory, gpl.is_core_line,
-              gpl.selection_score, gpl.explanation_public, gpl.explanation_internal,
-              pt.slug AS product_type_slug,
-              COALESCE(n.slug, '') AS primary_reason,
-              (SELECT count(*)::int FROM generated_line_source gls WHERE gls.generated_package_line_id = gpl.id) AS source_count,
-              (SELECT count(*)::int FROM generated_line_coverage glc WHERE glc.generated_package_line_id = gpl.id) AS coverage_count
-         FROM generated_package_line gpl
-         JOIN item i ON i.id = gpl.item_id
-         JOIN product_type pt ON pt.id = gpl.product_type_id
-         LEFT JOIN scenario_need sn ON sn.id = gpl.primary_reason_scenario_need_id
-         LEFT JOIN need n ON n.id = sn.need_id
-        WHERE gpl.recommendation_run_id = $1
-        ORDER BY gpl.is_accessory ASC, i.title ASC`,
-      [runId],
-    );
-
-    const usageConstraints = await client.query(
-      `SELECT gpl.id AS line_id, iuc.constraint_type, iuc.severity,
-              iuc.public_warning, iuc.internal_notes, iuc.blocks_recommendation
-         FROM generated_package_line gpl
-         JOIN item_usage_constraint iuc ON iuc.item_id = gpl.item_id AND iuc.status = 'active'
-        WHERE gpl.recommendation_run_id = $1
-        ORDER BY gpl.id, iuc.severity DESC, iuc.constraint_type`,
-      [runId],
-    );
-
-    const tasks = await client.query(
-      `WITH run_context AS (
-          SELECT rr.id, rr.package_id
-          FROM recommendation_run rr
-          WHERE rr.id = $1
-        ),
-        active_scenarios AS (
-          SELECT ps.scenario_id
-          FROM package_scenario ps
-          JOIN run_context rc ON rc.package_id = ps.package_id
-          UNION
-          SELECT ag.scenario_id
-          FROM recommendation_run_addon rra
-          JOIN addon_scenario ag ON ag.addon_id = rra.addon_id
-          JOIN run_context rc ON rc.id = rra.recommendation_run_id
-        )
-        SELECT pt.task_slug, pt.title, pt.description_public, pt.internal_notes,
-               pt.priority, pt.requires_completion, n.slug AS need_slug
-        FROM preparedness_task pt
-        JOIN scenario_need sn ON sn.id = pt.scenario_need_id
-        JOIN need n ON n.id = sn.need_id
-        JOIN active_scenarios act ON act.scenario_id = sn.scenario_id
-        WHERE pt.status = 'active'
-        ORDER BY pt.priority, pt.task_slug`,
-      [runId],
-    );
-
-    const sources = await client.query(
-      `SELECT gpl.id AS line_id, gls.source_type, n.slug AS scenario_need,
-              parent_i.title AS parent_item, gls.explanation
-         FROM generated_line_source gls
-         JOIN generated_package_line gpl ON gpl.id = gls.generated_package_line_id
-         LEFT JOIN scenario_need sn ON sn.id = gls.scenario_need_id
-         LEFT JOIN need n ON n.id = sn.need_id
-         LEFT JOIN generated_package_line parent_gpl ON parent_gpl.id = gls.parent_generated_package_line_id
-         LEFT JOIN item parent_i ON parent_i.id = parent_gpl.item_id
-        WHERE gpl.recommendation_run_id = $1
-        ORDER BY gpl.id, gls.source_type, parent_i.title`,
-      [runId],
-    );
-
-    const coverage = await client.query(
-      `SELECT gpl.id AS line_id, n.slug AS need, c.slug AS capability,
-              glc.coverage_strength, glc.counted_as_sufficient, glc.notes
-         FROM generated_line_coverage glc
-         JOIN generated_package_line gpl ON gpl.id = glc.generated_package_line_id
-         JOIN scenario_need sn ON sn.id = glc.scenario_need_id
-         JOIN need n ON n.id = sn.need_id
-         JOIN capability c ON c.id = glc.capability_id
-        WHERE gpl.recommendation_run_id = $1
-        ORDER BY gpl.id, n.slug, c.slug`,
-      [runId],
-    );
-
-    const blockingQa = [];
-    for (const view of BLOCKING_QA_VIEWS) {
-      blockingQa.push(await countView(client, view));
-    }
-
-    const warningQa = [];
-    for (const view of WARNING_QA_VIEWS) {
-      warningQa.push(await countView(client, view));
-    }
-    const generatedQa = {
-      withoutSources: await countView(client, 'qa_generated_lines_without_sources'),
-      productTypeMismatch: await countView(client, 'qa_generated_line_product_type_mismatch'),
-    };
-
-    return {
-      input,
-      run: run.rows[0],
-      lines: lines.rows,
-      tasks: tasks.rows,
-      sources: sources.rows,
-      coverage: coverage.rows,
-      usageConstraints: usageConstraints.rows,
-      blockingQa,
-      warningQa,
-      generatedQa,
-    };
+    return await loadRecommendationOutputForInput(client, input);
   } finally {
     await client.end();
   }
 }
 
-function rowsByLine(rows) {
-  return rows.reduce((acc, row) => {
-    if (!acc.has(row.line_id)) acc.set(row.line_id, []);
-    acc.get(row.line_id).push(row);
-    return acc;
-  }, new Map());
+function renderAddonPresetLinks(data, querySuffix) {
+  const current = data.input.addon_slugs.join(',');
+  return ADDON_PRESETS.map((preset) => {
+    const value = preset.slugs.join(',');
+    const isActive = value === current;
+    return `<a class="pill ${isActive ? 'good' : ''}" href="/internal/recommendation-poc?addon=${encodeURIComponent(value)}&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">${escapeHtml(preset.label)}</a>`;
+  }).join('');
 }
 
-function renderQaPanel(data) {
-  const blockingTotal = data.blockingQa.reduce((sum, row) => sum + row.records, 0);
-  const warningTotal = data.warningQa.reduce((sum, row) => sum + row.records, 0);
-  const qaOk = blockingTotal === 0 &&
-    warningTotal === 0 &&
-    data.generatedQa.withoutSources.records === 0 &&
-    data.generatedQa.productTypeMismatch.records === 0;
+function renderSectionTable(lines, emptyText) {
+  if (!lines.length) {
+    return `<div class="empty-note">${escapeHtml(emptyText)}</div>`;
+  }
 
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>SKU</th>
+          <th class="num">Qty</th>
+          <th>Role</th>
+          <th class="num">Score</th>
+          <th class="num">Sources</th>
+          <th class="num">Coverage</th>
+          <th>Waarom zit dit erin?</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lines.map((line) => `
+          <tr>
+            <td class="line-title">${escapeHtml(line.title)}</td>
+            <td>${escapeHtml(line.sku)}</td>
+            <td class="num">${escapeHtml(line.quantity)}</td>
+            <td><span class="pill ${line.runtime_role === 'core' ? 'good' : 'backup'}">${escapeHtml(line.runtime_role)}</span></td>
+            <td class="num">${escapeHtml(line.selection_score)}</td>
+            <td class="num">${escapeHtml(line.sources.length)}</td>
+            <td class="num">${escapeHtml(line.coverage.length)}</td>
+            <td>${escapeHtml(line.explanation_public)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderWarnings(data) {
   return `
     <section class="band">
       <div class="section-head">
-        <h2>QA-paneel</h2>
-        <span class="status ${qaOk ? 'ok' : 'warn'}">${qaOk ? 'alles 0' : 'aandacht nodig'}</span>
+        <h2>Warnings</h2>
+        <span class="pill ${data.warnings.length ? 'backup' : 'good'}">${data.warnings.length}</span>
+      </div>
+      ${data.warnings.length ? `
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>SKU</th>
+              <th>Type</th>
+              <th>Severity</th>
+              <th>Source</th>
+              <th>Blocks</th>
+              <th>Public warning</th>
+              <th>Internal notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.warnings.map((warning) => `
+              <tr>
+                <td>${escapeHtml(warning.item_title || '')}</td>
+                <td>${escapeHtml(warning.sku || '')}</td>
+                <td>${escapeHtml(warning.warning_type)}</td>
+                <td>${escapeHtml(warning.severity || '')}</td>
+                <td>${escapeHtml(warning.source)}</td>
+                <td>${warning.blocks_recommendation ? 'ja' : 'nee'}</td>
+                <td>${escapeHtml(warning.public_warning || '')}</td>
+                <td>${escapeHtml(warning.internal_notes || '')}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>` : `
+        <div class="empty-note">Geen aparte warnings verzameld voor deze run. Usage constraints en governance blijven wel zichtbaar per item in debug details.</div>`}
+    </section>`;
+}
+
+function renderTasks(data) {
+  return `
+    <section class="band">
+      <div class="section-head">
+        <h2>Tasks</h2>
+        <span class="pill ${data.tasks.length ? 'good' : ''}">${data.tasks.length}</span>
+      </div>
+      <div class="governance">Tasks en checks blijven naast producten zichtbaar. Dit zijn persoonlijke readiness-acties, geen generieke productregels.</div>
+      ${data.tasks.length ? `
+        <table>
+          <thead><tr><th>Task</th><th>Need</th><th>Priority</th><th>Public note</th><th>Internal note</th></tr></thead>
+          <tbody>
+            ${data.tasks.map((task) => `
+              <tr>
+                <td class="line-title">${escapeHtml(task.title)}<br><span class="subtle">${escapeHtml(task.task_slug)}</span></td>
+                <td>${escapeHtml(task.need_slug)}</td>
+                <td>${escapeHtml(task.priority)}</td>
+                <td>${escapeHtml(task.description_public)}</td>
+                <td>${escapeHtml(task.internal_notes)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>` : `<div class="empty-note">Geen tasks voor deze run.</div>`}
+    </section>`;
+}
+
+function renderQaPanel(data) {
+  return `
+    <section class="band">
+      <div class="section-head">
+        <h2>QA summary</h2>
+        <span class="status ${data.qa_summary.status === 'clean' ? 'ok' : 'warn'}">${escapeHtml(data.qa_summary.status)}</span>
       </div>
       <div class="metrics">
-        <div><strong>${blockingTotal}</strong><span>blocking QA count</span></div>
-        <div><strong>${warningTotal}</strong><span>warning QA count</span></div>
-        <div><strong>${data.generatedQa.withoutSources.records}</strong><span>generated lines without sources</span></div>
-        <div><strong>${data.generatedQa.productTypeMismatch.records}</strong><span>generated line producttype mismatch</span></div>
+        <div><strong>${data.qa_summary.blocking_total}</strong><span>blocking QA total</span></div>
+        <div><strong>${data.qa_summary.warning_total}</strong><span>warning/context QA total</span></div>
+        <div><strong>${data.qa_summary.generated_lines_without_sources}</strong><span>generated lines without sources</span></div>
+        <div><strong>${data.qa_summary.generated_line_producttype_mismatch}</strong><span>generated line producttype mismatch</span></div>
       </div>
       <details>
         <summary>Blocking views</summary>
         <table>
           <thead><tr><th>View</th><th>Records</th></tr></thead>
-          <tbody>${data.blockingQa.map(row => `<tr><td>${escapeHtml(row.view)}</td><td>${row.records}</td></tr>`).join('')}</tbody>
+          <tbody>${data.qa_summary.blocking_views.map((row) => `<tr><td>${escapeHtml(row.view)}</td><td>${row.records}</td></tr>`).join('')}</tbody>
         </table>
       </details>
       <details>
         <summary>Warning/context views</summary>
         <table>
           <thead><tr><th>View</th><th>Records</th></tr></thead>
-          <tbody>${data.warningQa.map(row => `<tr><td>${escapeHtml(row.view)}</td><td>${row.records}</td></tr>`).join('')}</tbody>
+          <tbody>${data.qa_summary.warning_views.map((row) => `<tr><td>${escapeHtml(row.view)}</td><td>${row.records}</td></tr>`).join('')}</tbody>
         </table>
       </details>
     </section>`;
 }
 
+function renderDebugDetails(data) {
+  return `
+    <section class="band">
+      <div class="section-head">
+        <h2>Debug details per item</h2>
+        <span class="pill">${data.lines.length}</span>
+      </div>
+      ${data.lines.map((line) => `
+        <details>
+          <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span> <span class="pill ${line.runtime_role === 'core' ? 'good' : 'backup'}">${escapeHtml(line.runtime_role)}</span></summary>
+          <div class="summary-grid" style="margin-top:12px">
+            <div><span>runtime_section</span><strong>${escapeHtml(line.runtime_section)}</strong></div>
+            <div><span>product_type</span><strong>${escapeHtml(line.product_type_slug)}</strong></div>
+            <div><span>primary_reason</span><strong>${escapeHtml(line.primary_reason || '')}</strong></div>
+            <div><span>selection_score</span><strong>${escapeHtml(line.selection_score)}</strong></div>
+          </div>
+          <h3 style="margin-top:12px">Sources</h3>
+          <table>
+            <thead><tr><th>source_type</th><th>scenario_need</th><th>parent item</th><th>explanation</th></tr></thead>
+            <tbody>
+              ${line.sources.map((src) => `
+                <tr>
+                  <td>${escapeHtml(src.source_type)}</td>
+                  <td>${escapeHtml(src.scenario_need || '')}</td>
+                  <td>${escapeHtml(src.parent_item || '')}</td>
+                  <td>${escapeHtml(src.explanation || '')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          <h3 style="margin-top:12px">Coverage</h3>
+          <table>
+            <thead><tr><th>Need</th><th>Capability</th><th>Strength</th><th>Status</th><th>Notes</th></tr></thead>
+            <tbody>
+              ${line.coverage.map((cov) => `
+                <tr>
+                  <td>${escapeHtml(cov.need)}</td>
+                  <td>${escapeHtml(cov.capability)}</td>
+                  <td>${escapeHtml(cov.coverage_strength)}</td>
+                  <td><span class="pill ${cov.counted_as_sufficient ? 'good' : 'backup'}">${fmtBool(cov.counted_as_sufficient)}</span></td>
+                  <td>${escapeHtml(cov.notes || '')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          ${line.usage_constraints.length ? `
+            <h3 style="margin-top:12px">Usage constraints</h3>
+            <table>
+              <thead><tr><th>Constraint</th><th>Severity</th><th>Public warning</th><th>Internal notes</th></tr></thead>
+              <tbody>
+                ${line.usage_constraints.map((rule) => `
+                  <tr>
+                    <td>${escapeHtml(rule.constraint_type)}</td>
+                    <td>${escapeHtml(rule.severity)}</td>
+                    <td>${escapeHtml(rule.public_warning)}</td>
+                    <td>${escapeHtml(rule.internal_notes)}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>` : '<div class="empty-note" style="margin-top:12px">Geen usage constraints op itemniveau.</div>'}
+          <h3 style="margin-top:12px">Internal explanation</h3>
+          <pre>${escapeHtml(line.explanation_internal || '')}</pre>
+        </details>`).join('')}
+    </section>`;
+}
+
 function renderPage(data) {
-  const sourcesByLine = rowsByLine(data.sources);
-  const coverageByLine = rowsByLine(data.coverage);
-  const usageByLine = rowsByLine(data.usageConstraints);
-  const blockingTotal = data.blockingQa.reduce((sum, row) => sum + row.records, 0);
-  const warningTotal = data.warningQa.reduce((sum, row) => sum + row.records, 0);
-  const qaStatus = blockingTotal === 0 && warningTotal === 0 ? 'clean' : 'attention';
-  const currentAddon = data.input.addon_slugs[0] || 'stroomuitval';
+  const currentAddonValue = data.input.addon_slugs.join(',');
   const querySuffix = `&adults=${encodeURIComponent(data.input.household_adults)}&children=${encodeURIComponent(data.input.household_children)}&pets=${encodeURIComponent(data.input.household_pets)}&duration_hours=${encodeURIComponent(data.input.duration_hours)}`;
 
   return `<!doctype html>
@@ -365,7 +362,7 @@ function renderPage(data) {
       color: white;
       padding: 24px 32px;
     }
-    main { max-width: 1420px; margin: 0 auto; padding: 24px 32px 48px; }
+    main { max-width: 1480px; margin: 0 auto; padding: 24px 32px 48px; }
     h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: 0; }
     h1 { font-size: 24px; }
     h2 { font-size: 18px; }
@@ -417,13 +414,28 @@ function renderPage(data) {
     }
     .status.ok { background: var(--ok); }
     .status.warn { background: var(--warn); }
-    pre {
-      overflow: auto;
-      background: #101820;
-      color: #e5edf5;
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      color: #374151;
+      background: white;
+      margin: 0 6px 6px 0;
+    }
+    .pill.good { border-color: #99d4cc; background: #e8f7f4; color: #0f766e; }
+    .pill.backup { border-color: #f4c27d; background: #fff7ed; color: #92400e; }
+    .governance, .empty-note {
+      border-left: 4px solid var(--warn);
+      background: #fff7ed;
       padding: 12px;
-      border-radius: 6px;
-      font-size: 13px;
+      margin-top: 12px;
+      border-radius: 4px;
+    }
+    .empty-note {
+      border-left-color: var(--line);
+      background: #fbfcfd;
     }
     table {
       width: 100%;
@@ -452,23 +464,13 @@ function renderPage(data) {
     }
     summary { cursor: pointer; font-weight: 700; }
     .line-title { font-weight: 700; }
-    .pill {
-      display: inline-block;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 12px;
-      color: #374151;
-      background: white;
-    }
-    .pill.good { border-color: #99d4cc; background: #e8f7f4; color: #0f766e; }
-    .pill.backup { border-color: #f4c27d; background: #fff7ed; color: #92400e; }
-    .governance {
-      border-left: 4px solid var(--warn);
-      background: #fff7ed;
+    pre {
+      overflow: auto;
+      background: #101820;
+      color: #e5edf5;
       padding: 12px;
-      margin-top: 12px;
-      border-radius: 4px;
+      border-radius: 6px;
+      font-size: 13px;
     }
     @media (max-width: 760px) {
       main, header { padding-left: 16px; padding-right: 16px; }
@@ -480,41 +482,31 @@ function renderPage(data) {
 <body>
   <header>
     <h1>Interne recommendation POC</h1>
-    <div class="subtle">Alle data komt uit bestaande generated recommendation output. Geen checkout, account of betaalflow.</div>
+    <div class="subtle">MVP-outputstructuur op bestaande generated data. Geen nieuwe schema-objecten, geen checkout, geen accountflow.</div>
   </header>
   <main>
     <section class="band">
       <div class="section-head">
-        <h2>Recommendation summary</h2>
-        <span class="status ${qaStatus === 'clean' ? 'ok' : 'warn'}">QA ${escapeHtml(qaStatus)}</span>
+        <h2>Input summary</h2>
+        <span class="status ${data.qa_summary.status === 'clean' ? 'ok' : 'warn'}">QA ${escapeHtml(data.qa_summary.status)}</span>
       </div>
       <div style="margin-bottom:14px">
-        <a class="pill ${currentAddon === 'stroomuitval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=stroomuitval&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Stroomuitval</a>
-        <a class="pill ${currentAddon === 'drinkwater' ? 'good' : ''}" href="/internal/recommendation-poc?addon=drinkwater&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Drinkwater</a>
-        <a class="pill ${currentAddon === 'voedsel_bereiding' ? 'good' : ''}" href="/internal/recommendation-poc?addon=voedsel_bereiding&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Voedsel</a>
-        <a class="pill ${currentAddon === 'hygiene_sanitatie_afval' ? 'good' : ''}" href="/internal/recommendation-poc?addon=hygiene_sanitatie_afval&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Hygiene</a>
-        <a class="pill ${currentAddon === 'ehbo_persoonlijke_zorg' ? 'good' : ''}" href="/internal/recommendation-poc?addon=ehbo_persoonlijke_zorg&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">EHBO</a>
-        <a class="pill ${currentAddon === 'warmte_droog_shelter_light' ? 'good' : ''}" href="/internal/recommendation-poc?addon=warmte_droog_shelter_light&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Warmte/Droog</a>
-        <a class="pill ${currentAddon === 'evacuatie' ? 'good' : ''}" href="/internal/recommendation-poc?addon=evacuatie&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Evacuatie</a>
-        <a class="pill ${currentAddon === 'taken_profielen' ? 'good' : ''}" href="/internal/recommendation-poc?addon=taken_profielen&tier=${escapeHtml(data.input.tier_slug)}${querySuffix}">Taken/Profielen</a>
-        <span class="subtle" style="margin-left:8px">Interne add-onkeuze voor bestaande POC-output.</span>
+        ${renderAddonPresetLinks(data, querySuffix)}
       </div>
       <div style="margin-bottom:14px">
-        <a class="pill ${data.input.tier_slug === 'basis' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis${querySuffix}">Basis</a>
-        <a class="pill ${data.input.tier_slug === 'basis_plus' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${escapeHtml(currentAddon)}&tier=basis_plus${querySuffix}">Basis+</a>
-        <span class="subtle" style="margin-left:8px">Tierkeuze voor dezelfde interne POC-input.</span>
+        <a class="pill ${data.input.tier_slug === 'basis' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${encodeURIComponent(currentAddonValue)}&tier=basis${querySuffix}">Basis</a>
+        <a class="pill ${data.input.tier_slug === 'basis_plus' ? 'good' : ''}" href="/internal/recommendation-poc?addon=${encodeURIComponent(currentAddonValue)}&tier=basis_plus${querySuffix}">Basis+</a>
       </div>
       <div class="summary-grid">
         <div><span>recommendation_run_id</span><strong>${escapeHtml(data.run.id)}</strong></div>
-        <div><span>status</span><strong>${escapeHtml(data.run.status)}</strong></div>
         <div><span>package</span><strong>${escapeHtml(data.run.package_name)} (${escapeHtml(data.run.package_slug)})</strong></div>
         <div><span>tier</span><strong>${escapeHtml(data.run.tier_name)} (${escapeHtml(data.run.tier_slug)})</strong></div>
-        <div><span>add-ons</span><strong>${data.run.addons.map(a => `${escapeHtml(a.name)} (${escapeHtml(a.slug)})`).join(', ')}</strong></div>
+        <div><span>actieve add-ons</span><strong>${data.input.addon_slugs.map((slug) => escapeHtml(slug)).join(', ')}</strong></div>
         <div><span>duration_hours</span><strong>${data.run.duration_hours}</strong></div>
         <div><span>household_adults</span><strong>${data.run.household_adults}</strong></div>
         <div><span>household_children</span><strong>${data.run.household_children}</strong></div>
         <div><span>household_pets</span><strong>${data.run.household_pets}</strong></div>
-        <div><span>QA-status</span><strong>${escapeHtml(qaStatus)}</strong></div>
+        <div><span>QA-status</span><strong>${escapeHtml(data.qa_summary.status)}</strong></div>
       </div>
       <h3 style="margin-top:16px">Gebruikte input</h3>
       <pre>${escapeHtml(JSON.stringify(data.input, null, 2))}</pre>
@@ -522,132 +514,48 @@ function renderPage(data) {
 
     <section class="band">
       <div class="section-head">
-        <h2>Pakketregels</h2>
-        <span class="pill">${data.lines.length} regels</span>
+        <h2>${sectionTitle('core_items')}</h2>
+        <span class="pill ${data.sections.core_items.length ? 'good' : ''}">${data.sections.core_items.length}</span>
       </div>
-      ${data.lines.length === 0 ? `<div class="governance">Deze run laat alleen tasks/checks zien. Er zijn voor deze add-on geen productregels gegenereerd.</div>` : ''}
-      <table>
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>SKU</th>
-            <th class="num">Qty</th>
-            <th>Role</th>
-            <th class="num">Score</th>
-            <th>Public explanation</th>
-            <th class="num">Sources</th>
-            <th class="num">Coverage</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.lines.map(line => `
-            <tr>
-              <td class="line-title">${escapeHtml(line.title)}</td>
-              <td>${escapeHtml(line.sku)}</td>
-              <td class="num">${escapeHtml(line.quantity)}</td>
-              <td>${escapeHtml(roleLabel(line))}</td>
-              <td class="num">${escapeHtml(line.selection_score)}</td>
-              <td>${escapeHtml(line.explanation_public)}</td>
-              <td class="num">${line.source_count}</td>
-              <td class="num">${line.coverage_count}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
+      ${renderSectionTable(data.sections.core_items, 'Geen core items in deze run.')}
     </section>
 
     <section class="band">
-      <h2>Sources en coverage per item</h2>
-      ${data.lines.map(line => {
-        const lineSources = sourcesByLine.get(line.id) || [];
-        const lineCoverage = coverageByLine.get(line.id) || [];
-        const lineUsage = usageByLine.get(line.id) || [];
-        const isRadio = line.sku === 'IOE-RADIO-AAUSB-PLUS';
-        const isFoodPrep = ['IOE-COOKER-OUTDOOR-GAS-BASIC', 'IOE-COOKER-OUTDOOR-GAS-PLUS', 'IOE-FUEL-GAS-230G-BASIC', 'IOE-FUEL-GAS-230G-PLUS'].includes(line.sku);
-        const isHygieneGoverned = ['IOE-HANDGEL-BASIC', 'IOE-HANDGEL-PLUS', 'IOE-HYGIENE-WIPES-BASIC', 'IOE-HYGIENE-WIPES-PLUS', 'IOE-GLOVES-NITRILE-BASIC', 'IOE-GLOVES-NITRILE-PLUS'].includes(line.sku);
-        const isSanitationGoverned = ['IOE-TOILET-BAGS-BASIC', 'IOE-TOILET-BAGS-PLUS', 'IOE-ABSORBENT-BASIC', 'IOE-ABSORBENT-PLUS', 'IOE-WASTE-BAGS-BASIC', 'IOE-WASTE-BAGS-PLUS', 'IOE-ZIPBAGS-BASIC', 'IOE-ZIPBAGS-PLUS'].includes(line.sku);
-        const isEhboGoverned = ['IOE-FIRSTAID-KIT-BASIC', 'IOE-FIRSTAID-KIT-PLUS', 'IOE-PLASTERS-BASIC', 'IOE-PLASTERS-PLUS', 'IOE-STERILE-GAUZE-BASIC', 'IOE-STERILE-GAUZE-PLUS', 'IOE-WOUND-CLEANING-BASIC', 'IOE-WOUND-CLEANING-PLUS', 'IOE-MEDICAL-TAPE-BASIC', 'IOE-MEDICAL-TAPE-PLUS', 'IOE-THERMOMETER-PLUS'].includes(line.sku);
-        const isWarmthGoverned = ['IOE-THERMAL-BLANKET-BASIC', 'IOE-THERMAL-BLANKET-PLUS', 'IOE-EMERGENCY-BLANKET-BASIC', 'IOE-EMERGENCY-BIVVY-PLUS'].includes(line.sku);
-        const isShelterLightGoverned = ['IOE-PONCHO-BASIC', 'IOE-PONCHO-PLUS', 'IOE-TARP-LIGHT-BASIC', 'IOE-TARP-LIGHT-PLUS', 'IOE-PARACORD-BASIC', 'IOE-PARACORD-PLUS', 'IOE-TARP-PEGS-BASIC', 'IOE-TARP-PEGS-PLUS', 'IOE-GROUNDSHEET-PLUS'].includes(line.sku);
-        const isEvacuatieGoverned = ['IOE-EVAC-BAG-BASIC', 'IOE-EVAC-BAG-PLUS', 'IOE-DOC-FOLDER-BASIC', 'IOE-DOC-FOLDER-PLUS', 'IOE-WHISTLE-BASIC', 'IOE-WHISTLE-PLUS', 'IOE-REFLECTIVE-VEST-BASIC', 'IOE-REFLECTIVE-VEST-PLUS', 'IOE-HEADLAMP-AAA-BASIC', 'IOE-HEADLAMP-AAA-PLUS', 'IOE-BOTTLE-1L-BASIC', 'IOE-BOTTLE-1L-PLUS', 'IOE-FILTERBOTTLE-PLUS'].includes(line.sku);
-        return `
-          <details>
-            <summary>${escapeHtml(line.title)} <span class="pill">${escapeHtml(line.sku)}</span> <span class="pill ${roleLabel(line) === 'core' ? 'good' : 'backup'}">${escapeHtml(roleLabel(line))}</span></summary>
-            ${isRadio ? `<div class="governance">Laad- en lampfuncties tellen alleen als backup en vervangen geen powerbank, hoofdlamp of lantaarn.</div>` : ''}
-            ${isFoodPrep ? `<div class="governance">Voedselbereiding is ondersteunend. Gas, brandstof en open vuur worden niet als primary voedseldekking geteld.</div>` : ''}
-            ${isHygieneGoverned ? `<div class="governance">Hygiene-items claimen geen medische bescherming, steriliteit of volledige infectiepreventie.</div>` : ''}
-            ${isSanitationGoverned ? `<div class="governance">Sanitatie- en afvalitems zijn bedoeld voor tijdelijke containment en niet voor gevaarlijk, chemisch of medisch afval.</div>` : ''}
-            ${isEhboGoverned ? `<div class="governance">EHBO-items ondersteunen kleine incidenten en observatie. Ze vervangen geen arts, diagnose, behandeling of noodhulp.</div>` : ''}
-            ${isWarmthGoverned ? `<div class="governance">Warmte-items ondersteunen warmtebehoud. Ze vervangen geen slaapcomfort en behandelen geen onderkoeling. Houd ze uit de buurt van open vuur.</div>` : ''}
-            ${isShelterLightGoverned ? `<div class="governance">Shelter-light items zijn tijdelijke afscherming en persoonlijke regenbescherming. Ze zijn geen tent, geen warmtebron, geen volledige shelter en geen garantie tegen extreem weer.</div>` : ''}
-            ${isEvacuatieGoverned ? `<div class="governance">Evacuatie-items ondersteunen dragen, documentbescherming, signalering, licht en water meenemen. Ze garanderen geen veilige evacuatie, geen redding en geen universele waterfiltering; documenten, cash, sleutels en medicatie blijven checks.</div>` : ''}
-            <h3 style="margin-top:12px">Sources</h3>
-            <table>
-              <thead><tr><th>source_type</th><th>scenario_need</th><th>parent item</th><th>explanation</th></tr></thead>
-              <tbody>
-                ${lineSources.map(src => `
-                  <tr>
-                    <td>${escapeHtml(src.source_type)}</td>
-                    <td>${escapeHtml(src.scenario_need)}</td>
-                    <td>${escapeHtml(src.parent_item || '')}</td>
-                    <td>${escapeHtml(src.explanation)}</td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-            <h3 style="margin-top:12px">Coverage</h3>
-            <table>
-              <thead><tr><th>need</th><th>capability</th><th>coverage_strength</th><th>status</th><th>notes</th></tr></thead>
-              <tbody>
-                ${lineCoverage.map(cov => `
-                  <tr>
-                    <td>${escapeHtml(cov.need)}</td>
-                    <td>${escapeHtml(cov.capability)}</td>
-                    <td>${escapeHtml(cov.coverage_strength)}</td>
-                    <td><span class="pill ${cov.counted_as_sufficient ? 'good' : 'backup'}">${fmtBool(cov.counted_as_sufficient)}</span></td>
-                    <td>${escapeHtml(cov.notes)}</td>
-                  </tr>`).join('')}
-              </tbody>
-            </table>
-            ${lineUsage.length ? `
-              <h3 style="margin-top:12px">Usage constraints</h3>
-              <table>
-                <thead><tr><th>constraint</th><th>severity</th><th>public warning</th><th>internal notes</th></tr></thead>
-                <tbody>
-                  ${lineUsage.map(rule => `
-                    <tr>
-                      <td>${escapeHtml(rule.constraint_type)}</td>
-                      <td>${escapeHtml(rule.severity)}</td>
-                      <td>${escapeHtml(rule.public_warning)}</td>
-                      <td>${escapeHtml(rule.internal_notes)}</td>
-                    </tr>`).join('')}
-                </tbody>
-              </table>` : ''}
-          </details>`;
-      }).join('')}
+      <div class="section-head">
+        <h2>${sectionTitle('accessories')}</h2>
+        <span class="pill ${data.sections.accessories.length ? 'good' : ''}">${data.sections.accessories.length}</span>
+      </div>
+      ${renderSectionTable(data.sections.accessories, 'Geen accessoires in deze run.')}
     </section>
 
-    ${data.tasks.length ? `
-      <section class="band">
-        <div class="section-head">
-          <h2>Tasks en checks</h2>
-          <span class="pill">${data.tasks.length} tasks</span>
-        </div>
-        <div class="governance">Persoonlijke en administratieve readiness kan hier als task/check terugkomen. Denk aan documenten, contacten, sleutels, cash, laders, medicatie of andere checks die we bewust niet als generiek productitem genereren. Profielinput en duur blijven zichtbaar in de runcontext hierboven.</div>
-        <table>
-          <thead><tr><th>Task</th><th>Need</th><th>Priority</th><th>Public note</th><th>Internal note</th></tr></thead>
-          <tbody>
-            ${data.tasks.map(task => `
-              <tr>
-                <td class="line-title">${escapeHtml(task.title)}<br><span class="subtle">${escapeHtml(task.task_slug)}</span></td>
-                <td>${escapeHtml(task.need_slug)}</td>
-                <td>${escapeHtml(task.priority)}</td>
-                <td>${escapeHtml(task.description_public)}</td>
-                <td>${escapeHtml(task.internal_notes)}</td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
-      </section>` : ''}
+    <section class="band">
+      <div class="section-head">
+        <h2>${sectionTitle('supporting_items')}</h2>
+        <span class="pill ${data.sections.supporting_items.length ? 'good' : ''}">${data.sections.supporting_items.length}</span>
+      </div>
+      ${renderSectionTable(data.sections.supporting_items, 'Geen supporting items in deze run.')}
+    </section>
 
+    <section class="band">
+      <div class="section-head">
+        <h2>${sectionTitle('backup_items')}</h2>
+        <span class="pill ${data.sections.backup_items.length ? 'good' : ''}">${data.sections.backup_items.length}</span>
+      </div>
+      ${renderSectionTable(data.sections.backup_items, 'Geen backup items in deze run.')}
+    </section>
+
+    <section class="band">
+      <div class="section-head">
+        <h2>${sectionTitle('optional_additions')}</h2>
+        <span class="pill ${data.sections.optional_additions.length ? 'good' : ''}">${data.sections.optional_additions.length}</span>
+      </div>
+      ${renderSectionTable(data.sections.optional_additions, 'Optional additions zijn in deze hardeningfase nog leeg toegestaan.')}
+    </section>
+
+    ${renderTasks(data)}
+    ${renderWarnings(data)}
     ${renderQaPanel(data)}
+    ${renderDebugDetails(data)}
   </main>
 </body>
 </html>`;
@@ -675,14 +583,14 @@ async function handleRequest(req, res) {
     }
 
     const tier = url.searchParams.get('tier') === 'basis' ? 'basis' : 'basis_plus';
-    const addonParam = url.searchParams.get('addon');
-    const addon = ALLOWED_ADDONS.includes(addonParam) ? addonParam : 'stroomuitval';
-    const data = await loadRecommendationData(inputForSelection(tier, addon, {
+    const addonValue = url.searchParams.get('addon') || url.searchParams.get('addons') || DEFAULT_POC_INPUT.addon_slugs.join(',');
+    const data = await loadRecommendationData(inputForSelection(tier, addonValue, {
       household_adults: url.searchParams.get('adults'),
       household_children: url.searchParams.get('children'),
       household_pets: url.searchParams.get('pets'),
       duration_hours: url.searchParams.get('duration_hours'),
     }));
+
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(renderPage(data));
   } catch (error) {
