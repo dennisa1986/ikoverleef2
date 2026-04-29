@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 const { loadRecommendationOutputForInput } = require('../../backend/calculate');
+const { loadBackofficeData } = require('../../backend/backoffice_queries');
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -121,6 +122,21 @@ async function loadRecommendationData(input) {
   await client.connect();
   try {
     return await loadRecommendationOutputForInput(client, input);
+  } finally {
+    await client.end();
+  }
+}
+
+async function loadBackofficePocData() {
+  const connectionString = dbUrl();
+  if (!connectionString) {
+    throw new Error(`IOE_PG_URL ontbreekt. Zet deze in ${ENV_PATH} of de shell environment.`);
+  }
+
+  const client = new Client({ connectionString });
+  await client.connect();
+  try {
+    return await loadBackofficeData(client);
   } finally {
     await client.end();
   }
@@ -325,6 +341,202 @@ function renderDebugDetails(data) {
           <pre>${escapeHtml(line.explanation_internal || '')}</pre>
         </details>`).join('')}
     </section>`;
+}
+
+function renderObjectTable(rows, columns, emptyText) {
+  if (!rows.length) return `<div class="empty-note">${escapeHtml(emptyText)}</div>`;
+  return `
+    <table>
+      <thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr>
+            ${columns.map((column) => `<td>${escapeHtml(row[column.key])}</td>`).join('')}
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderBackofficePage(data, domain = 'all') {
+  const show = (section) => domain === 'all' || domain === section;
+  const qa = data.qaSummary;
+
+  return `<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ik overleef - backoffice POC</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #5f6b7a;
+      --line: #d7dde5;
+      --ok: #0f766e;
+      --warn: #b45309;
+      --dark: #17202a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--text); font-size: 15px; line-height: 1.45; }
+    header { background: var(--dark); color: white; padding: 24px 32px; }
+    main { max-width: 1480px; margin: 0 auto; padding: 24px 32px 48px; }
+    h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: 0; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 18px; }
+    .subtle { color: var(--muted); }
+    header .subtle { color: #cbd5e1; margin-top: 6px; }
+    .band { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; margin-bottom: 18px; padding: 18px; }
+    .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+    .metrics div { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; min-width: 0; }
+    .metrics span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .metrics strong { display: block; font-size: 24px; color: var(--dark); overflow-wrap: anywhere; }
+    .status { border-radius: 999px; padding: 4px 10px; color: white; white-space: nowrap; font-size: 13px; }
+    .status.ok { background: var(--ok); }
+    .status.warn { background: var(--warn); }
+    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #374151; background: white; margin: 0 6px 6px 0; }
+    .pill.good { border-color: #99d4cc; background: #e8f7f4; color: #0f766e; }
+    .pill.backup { border-color: #f4c27d; background: #fff7ed; color: #92400e; }
+    .empty-note, .governance { border-left: 4px solid var(--warn); background: #fff7ed; padding: 12px; margin-top: 12px; border-radius: 4px; }
+    .empty-note { border-left-color: var(--line); background: #fbfcfd; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 9px 8px; text-align: left; vertical-align: top; }
+    th { color: #374151; font-size: 12px; text-transform: uppercase; background: #eef2f6; }
+    details { border: 1px solid var(--line); border-radius: 6px; margin-top: 10px; padding: 10px 12px; background: #fbfcfd; }
+    summary { cursor: pointer; font-weight: 700; }
+    @media (max-width: 760px) { main, header { padding-left: 16px; padding-right: 16px; } table { font-size: 13px; } th, td { padding: 7px 6px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Backoffice POC</h1>
+    <div class="subtle">Read-only inspectie op bestaande data. Runtime labels zijn geen database-enums.</div>
+  </header>
+  <main>
+    <section class="band">
+      <div class="section-head">
+        <h2>Backoffice navigatie</h2>
+        <span class="status ${qa.status === 'clean' ? 'ok' : 'warn'}">${escapeHtml(qa.status)}</span>
+      </div>
+      <a class="pill ${domain === 'all' ? 'good' : ''}" href="/internal/backoffice-poc">Alles</a>
+      <a class="pill ${domain === 'qa' ? 'good' : ''}" href="/internal/backoffice-poc?domain=qa">QA</a>
+      <a class="pill ${domain === 'scenarios' ? 'good' : ''}" href="/internal/backoffice-poc?domain=scenarios">Scenario matrix</a>
+      <a class="pill ${domain === 'readiness' ? 'good' : ''}" href="/internal/backoffice-poc?domain=readiness">Readiness</a>
+      <a class="pill ${domain === 'governance' ? 'good' : ''}" href="/internal/backoffice-poc?domain=governance">Governance</a>
+      <div class="governance">Release baseline wordt runtime/static getoond; er is geen database release registry.</div>
+    </section>
+
+    ${show('qa') ? `
+      <section class="band">
+        <div class="section-head"><h2>QA dashboard summary</h2><span class="status ${qa.status === 'clean' ? 'ok' : 'warn'}">${escapeHtml(qa.status)}</span></div>
+        <div class="metrics">
+          <div><strong>${qa.blocking_total}</strong><span>blocking total</span></div>
+          <div><strong>${qa.warning_total}</strong><span>warning total</span></div>
+          <div><strong>${qa.generated_lines_without_sources}</strong><span>generated lines without sources</span></div>
+          <div><strong>${qa.generated_line_producttype_mismatch}</strong><span>producttype mismatch</span></div>
+        </div>
+        ${renderObjectTable(qa.per_view_records, [
+          { key: 'category', label: 'category' },
+          { key: 'view', label: 'view' },
+          { key: 'records', label: 'records' },
+        ], 'Geen QA views gevonden.')}
+      </section>` : ''}
+
+    ${show('scenarios') ? `
+      <section class="band">
+        <div class="section-head"><h2>Scenario matrix</h2><span class="pill">${data.scenarioMatrix.length}</span></div>
+        ${renderObjectTable(data.scenarioMatrix, [
+          { key: 'scenario_slug', label: 'scenario' },
+          { key: 'scenario_status', label: 'scenario status' },
+          { key: 'need_slug', label: 'need' },
+          { key: 'need_content_only', label: 'content only' },
+          { key: 'capability_count', label: 'capabilities' },
+          { key: 'product_rule_count', label: 'rules' },
+          { key: 'active_candidate_count_basis', label: 'basis candidates' },
+          { key: 'active_candidate_count_basis_plus', label: 'basis+ candidates' },
+          { key: 'has_primary_coverage_candidate', label: 'primary candidate' },
+          { key: 'has_accessory_requirements', label: 'accessories' },
+          { key: 'governance_flag_count', label: 'governance flags' },
+        ], 'Scenario matrix is leeg.')}
+      </section>` : ''}
+
+    ${show('readiness') ? `
+      <section class="band">
+        <div class="section-head"><h2>Product readiness</h2><span class="pill">${data.productReadiness.length}</span></div>
+        ${renderObjectTable(data.productReadiness, [
+          { key: 'item_sku', label: 'sku' },
+          { key: 'item_title', label: 'item' },
+          { key: 'item_status', label: 'status' },
+          { key: 'product_type_slug', label: 'product type' },
+          { key: 'capability_count', label: 'capabilities' },
+          { key: 'supplier_offer_count', label: 'offers' },
+          { key: 'usage_constraint_count', label: 'constraints' },
+          { key: 'governance_rule_count', label: 'governance' },
+          { key: 'candidate_count', label: 'candidates' },
+          { key: 'readiness_label', label: 'label' },
+          { key: 'readiness_reason', label: 'reason' },
+        ], 'Product readiness is leeg.')}
+      </section>
+      <section class="band">
+        <div class="section-head"><h2>Candidate readiness</h2><span class="pill">${data.candidateReadiness.length}</span></div>
+        ${renderObjectTable(data.candidateReadiness, [
+          { key: 'tier_slug', label: 'tier' },
+          { key: 'product_type_slug', label: 'product type' },
+          { key: 'item_sku', label: 'sku' },
+          { key: 'is_default_candidate', label: 'default' },
+          { key: 'item_status', label: 'status' },
+          { key: 'product_type_match', label: 'type match' },
+          { key: 'supplier_offer_count', label: 'offers' },
+          { key: 'capability_count', label: 'capabilities' },
+          { key: 'readiness_label', label: 'label' },
+        ], 'Candidate readiness is leeg.')}
+      </section>
+      <section class="band">
+        <div class="section-head"><h2>Supplier offer attention</h2><span class="pill">${data.supplierOfferAttention.length}</span></div>
+        ${renderObjectTable(data.supplierOfferAttention, [
+          { key: 'item_sku', label: 'sku' },
+          { key: 'supplier_offer_count', label: 'offers' },
+          { key: 'attention_label', label: 'label' },
+          { key: 'attention_reason', label: 'reason' },
+        ], 'Supplier offer attention is leeg.')}
+      </section>` : ''}
+
+    ${show('governance') ? `
+      <section class="band">
+        <div class="section-head"><h2>Governance attention</h2><span class="pill">${data.governanceAttention.length}</span></div>
+        ${renderObjectTable(data.governanceAttention, [
+          { key: 'item_sku', label: 'sku' },
+          { key: 'product_type_slug', label: 'product type' },
+          { key: 'constraint_type', label: 'constraint' },
+          { key: 'severity', label: 'severity' },
+          { key: 'blocks_recommendation', label: 'blocks' },
+          { key: 'public_warning', label: 'public warning' },
+          { key: 'internal_notes', label: 'internal notes' },
+          { key: 'governance_context', label: 'context' },
+        ], 'Governance attention is leeg.')}
+      </section>` : ''}
+
+    <section class="band">
+      <div class="section-head"><h2>Release baseline</h2><span class="pill">${data.releaseBaseline.baselines.length}</span></div>
+      <div class="governance">${escapeHtml(data.releaseBaseline.note)}</div>
+      ${renderObjectTable(data.releaseBaseline.baselines, [
+        { key: 'order', label: '#' },
+        { key: 'tag', label: 'tag' },
+        { key: 'status', label: 'status' },
+      ], 'Geen baselineconfig gevonden.')}
+    </section>
+
+    <section class="band">
+      <div class="section-head"><h2>Open attention points</h2><span class="pill">${data.openAttentionPoints.length}</span></div>
+      <ul>
+        ${data.openAttentionPoints.map((point) => `<li>${escapeHtml(point)}</li>`).join('')}
+      </ul>
+    </section>
+  </main>
+</body>
+</html>`;
 }
 
 function renderPage(data) {
@@ -576,6 +788,16 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (url.pathname === '/internal/backoffice-poc') {
+      const allowedDomains = new Set(['all', 'qa', 'readiness', 'governance', 'scenarios']);
+      const domainParam = url.searchParams.get('domain') || 'all';
+      const domain = allowedDomains.has(domainParam) ? domainParam : 'all';
+      const data = await loadBackofficePocData();
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderBackofficePage(data, domain));
+      return;
+    }
+
     if (url.pathname !== '/internal/recommendation-poc') {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Not found');
@@ -599,6 +821,17 @@ async function handleRequest(req, res) {
   }
 }
 
-http.createServer(handleRequest).listen(PORT, HOST, () => {
-  console.log(`Internal recommendation POC: http://${HOST}:${PORT}/internal/recommendation-poc`);
-});
+if (require.main === module) {
+  http.createServer(handleRequest).listen(PORT, HOST, () => {
+    console.log(`Internal recommendation POC: http://${HOST}:${PORT}/internal/recommendation-poc`);
+    console.log(`Internal backoffice POC: http://${HOST}:${PORT}/internal/backoffice-poc`);
+  });
+}
+
+module.exports = {
+  inputForSelection,
+  loadRecommendationData,
+  loadBackofficePocData,
+  renderBackofficePage,
+  handleRequest,
+};
