@@ -10,6 +10,28 @@ const HOST = process.env.HOST || '127.0.0.1';
 const WORKSPACE_ROOT = path.resolve(__dirname, '..', '..');
 const ENV_PATH = path.join(WORKSPACE_ROOT, '.env.local');
 
+function loadLocalEnv() {
+  if (!fs.existsSync(ENV_PATH)) return {};
+  return Object.fromEntries(
+    fs.readFileSync(ENV_PATH, 'utf8')
+      .split(/\r?\n/)
+      .filter((line) => line && !line.trimStart().startsWith('#') && line.includes('='))
+      .map((line) => {
+        const idx = line.indexOf('=');
+        return [line.slice(0, idx), line.slice(idx + 1)];
+      }),
+  );
+}
+
+function applyLocalEnv() {
+  const env = loadLocalEnv();
+  for (const [key, value] of Object.entries(env)) {
+    if (!process.env[key]) process.env[key] = value;
+  }
+}
+
+applyLocalEnv();
+
 const DEFAULT_POC_INPUT = {
   package_slug: 'basispakket',
   tier_slug: 'basis_plus',
@@ -87,29 +109,15 @@ function inputForSelection(tierSlug, addonValue, overrides = {}) {
     ...DEFAULT_POC_INPUT,
     tier_slug: tierSlug === 'basis' ? 'basis' : 'basis_plus',
     addon_slugs: normalizeAddonSlugs(addonValue),
-    duration_hours: parsePositiveInt(overrides.duration_hours, 72),
+    duration_hours: Math.max(24, parsePositiveInt(overrides.duration_hours, 72)),
     household_adults: Math.max(1, parsePositiveInt(overrides.household_adults, DEFAULT_POC_INPUT.household_adults)),
     household_children: parsePositiveInt(overrides.household_children, DEFAULT_POC_INPUT.household_children),
     household_pets: parsePositiveInt(overrides.household_pets, DEFAULT_POC_INPUT.household_pets),
   };
 }
 
-function loadLocalEnv() {
-  if (!fs.existsSync(ENV_PATH)) return {};
-  return Object.fromEntries(
-    fs.readFileSync(ENV_PATH, 'utf8')
-      .split(/\r?\n/)
-      .filter((line) => line && !line.trimStart().startsWith('#') && line.includes('='))
-      .map((line) => {
-        const idx = line.indexOf('=');
-        return [line.slice(0, idx), line.slice(idx + 1)];
-      }),
-  );
-}
-
 function dbUrl() {
-  const env = loadLocalEnv();
-  return process.env.IOE_PG_URL || env.IOE_PG_URL;
+  return process.env.IOE_PG_URL;
 }
 
 function escapeHtml(value) {
@@ -127,11 +135,11 @@ function fmtBool(value) {
 
 function sectionTitle(key) {
   switch (key) {
-    case 'core_items': return 'Core items';
+    case 'core_items': return 'Kernitems (Core items)';
     case 'accessories': return 'Accessoires';
-    case 'supporting_items': return 'Supporting items';
-    case 'backup_items': return 'Backup items';
-    case 'optional_additions': return 'Optional additions';
+    case 'supporting_items': return 'Ondersteunend (Supporting items)';
+    case 'backup_items': return 'Backup (Backup items)';
+    case 'optional_additions': return 'Optioneel (Optional additions)';
     default: return key;
   }
 }
@@ -275,7 +283,7 @@ function renderTasks(data) {
   return `
     <section class="band">
       <div class="section-head">
-        <h2>Tasks</h2>
+        <h2>Taken (Tasks)</h2>
         <span class="pill ${data.tasks.length ? 'good' : ''}">${data.tasks.length}</span>
       </div>
       <div class="governance">Tasks en checks blijven naast producten zichtbaar. Dit zijn persoonlijke readiness-acties, geen generieke productregels.</div>
@@ -822,7 +830,7 @@ function renderMvpTasks(data) {
           <h3>${escapeHtml(task.title)}</h3>
           <p>${escapeHtml(task.description_public)}</p>
           <div class="subtle">${escapeHtml(task.need_slug)} · priority ${escapeHtml(task.priority)}</div>
-        </article>`).join('') : '<div class="empty">Geen tasks voor deze run.</div>'}
+        </article>`).join('') : '<div class="empty">Geen taken voor deze run.</div>'}
     </section>`;
 }
 
@@ -830,7 +838,7 @@ function renderMvpWarnings(data) {
   return `
     <section class="band">
       <div class="section-head">
-        <h2>Warnings</h2>
+        <h2>Aandachtspunten (Warnings)</h2>
         <span class="pill ${data.warnings.length ? 'warn' : 'good'}">${data.warnings.length}</span>
       </div>
       ${data.warnings.length ? data.warnings.slice(0, 80).map((warning) => `
@@ -880,12 +888,12 @@ function renderMvpRecommendationPage(data) {
         <div class="metric"><span>Kinderen</span><strong>${escapeHtml(data.input.household_children)}</strong></div>
         <div class="metric"><span>Huisdieren</span><strong>${escapeHtml(data.input.household_pets)}</strong></div>
         <div class="metric"><span>Duur</span><strong>${escapeHtml(data.input.duration_hours)}u</strong></div>
-        <div class="metric"><span>Core</span><strong>${counts.core}</strong></div>
+        <div class="metric"><span>Kernitems</span><strong>${counts.core}</strong></div>
         <div class="metric"><span>Accessoires</span><strong>${counts.accessories}</strong></div>
-        <div class="metric"><span>Supporting</span><strong>${counts.supporting}</strong></div>
+        <div class="metric"><span>Ondersteunend</span><strong>${counts.supporting}</strong></div>
         <div class="metric"><span>Backup</span><strong>${counts.backup}</strong></div>
-        <div class="metric"><span>Tasks</span><strong>${counts.tasks}</strong></div>
-        <div class="metric"><span>Warnings</span><strong>${counts.warnings}</strong></div>
+        <div class="metric"><span>Taken</span><strong>${counts.tasks}</strong></div>
+        <div class="metric"><span>Aandachtspunten</span><strong>${counts.warnings}</strong></div>
       </div>
       <div style="margin-top:12px">
         ${data.input.addon_slugs.map((slug) => `<span class="pill good">${escapeHtml(slug)}</span>`).join('')}
@@ -906,7 +914,7 @@ function renderMvpRecommendationPage(data) {
 
     <section class="band">
       <div class="section-head">
-        <h2>QA summary</h2>
+        <h2>Interne QA-status (QA summary)</h2>
         <span class="pill ${data.qa_summary.status === 'clean' ? 'good' : 'warn'}">${escapeHtml(data.qa_summary.status)}</span>
       </div>
       <div class="metrics">
@@ -1222,12 +1230,16 @@ async function handleRequest(req, res) {
   }
 }
 
-if (require.main === module) {
-  http.createServer(handleRequest).listen(PORT, HOST, () => {
+function startServer() {
+  return http.createServer(handleRequest).listen(PORT, HOST, () => {
     console.log(`Internal recommendation POC: http://${HOST}:${PORT}/internal/recommendation-poc`);
     console.log(`Internal backoffice POC: http://${HOST}:${PORT}/internal/backoffice-poc`);
     console.log(`MVP configurator: http://${HOST}:${PORT}/mvp`);
   });
+}
+
+if (require.main === module) {
+  startServer();
 }
 
 module.exports = {
@@ -1240,4 +1252,5 @@ module.exports = {
   renderMvpRecommendationPage,
   renderBackofficePage,
   handleRequest,
+  startServer,
 };

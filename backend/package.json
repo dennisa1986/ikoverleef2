@@ -17,7 +17,8 @@
     "test:backoffice-hardening-poc": "node regression_backoffice_hardening_poc.js",
     "test:ui-mvp-poc": "node regression_ui_mvp_poc.js",
     "test:mvp-suite-poc": "node regression_mvp_suite_poc.js",
-    "test:mvp-rc-poc": "node regression_mvp_rc_poc.js"
+    "test:mvp-rc-poc": "node regression_mvp_rc_poc.js",
+    "test:demo-readiness-poc": "node regression_demo_readiness_poc.js"
   },
   "dependencies": {
     "pg": "^8.13.0"

@@ -1,0 +1,12 @@
+{
+  "name": "ikoverleef",
+  "version": "1.0.1-demo-readiness",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev:mvp": "node scripts/start_mvp.js",
+    "start:internal-poc": "node scripts/start_mvp.js",
+    "test:mvp-rc": "npm --prefix backend run test:mvp-rc-poc",
+    "test:all-poc": "npm --prefix backend run test:mvp-suite-poc && npm --prefix backend run test:mvp-rc-poc"
+  }
+}
