@@ -67,14 +67,12 @@ function requestPath(pathname) {
 }
 
 function assertMvpSections(html) {
-  assertTruthy(html.includes('Core items'), 'Core items section visible');
+  assertTruthy(html.includes('Kern van je pakket'), 'core section visible');
   assertTruthy(html.includes('Accessoires'), 'Accessories section visible');
-  assertTruthy(html.includes('Supporting items'), 'Supporting section visible');
-  assertTruthy(html.includes('Backup items'), 'Backup section visible');
-  assertTruthy(html.includes('Optional additions'), 'Optional additions section visible');
-  assertTruthy(html.includes('Tasks'), 'Tasks section visible');
-  assertTruthy(html.includes('Warnings'), 'Warnings section visible');
-  assertTruthy(html.includes('QA summary'), 'QA summary visible');
+  assertTruthy(html.includes('Backup en ondersteuning'), 'supporting/backup section visible');
+  assertTruthy(html.includes('Persoonlijke taken'), 'Tasks section visible');
+  assertTruthy(html.includes('Aandachtspunten'), 'Warnings section visible');
+  assertTruthy(html.includes('Wat kun je nu doen?'), 'next steps visible');
 }
 
 async function main() {
@@ -87,7 +85,7 @@ async function main() {
   const basisPlusInput = mvpInputFromSearchParams(new URLSearchParams('tier=basis_plus&addons=stroomuitval,drinkwater,evacuatie,taken_profielen&adults=2&children=1&pets=1&duration_hours=72'));
 
   const configuratorHtml = renderMvpConfiguratorPage(basisPlusInput);
-  assertTruthy(configuratorHtml.includes('Configurator'), 'configurator render works');
+  assertTruthy(configuratorHtml.includes('Stel je noodpakketadvies samen'), 'configurator render works');
   assertTruthy(configuratorHtml.includes('Advies bekijken'), 'configurator CTA visible');
   assertNotContains(configuratorHtml, ['checkout', 'betaling', 'winkelmand', 'account'], 'configurator');
 
@@ -113,7 +111,7 @@ async function main() {
 
   const mvpRoute = await requestPath('/mvp');
   assertTruthy(mvpRoute.statusCode === 200, '/mvp route returns 200');
-  assertTruthy(mvpRoute.body.includes('Configurator'), '/mvp route renders configurator');
+  assertTruthy(mvpRoute.body.includes('Stel je noodpakketadvies samen'), '/mvp route renders configurator');
 
   const recommendationRoute = await requestPath('/mvp/recommendation?tier=basis_plus&addons=stroomuitval,drinkwater,evacuatie,taken_profielen&adults=2&children=1&pets=1&duration_hours=72');
   assertTruthy(recommendationRoute.statusCode === 200, '/mvp/recommendation route returns 200');

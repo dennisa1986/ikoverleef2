@@ -227,17 +227,17 @@ async function main() {
   assertEqual(root.statusCode, 302, 'root route redirects');
   assertEqual(root.headers.Location, '/mvp', 'root route redirects to /mvp');
 
-  await assertRoute('/mvp', 200, ['Configurator', 'Advies bekijken'], '/mvp');
+  await assertRoute('/mvp', 200, ['Stel je noodpakketadvies samen', 'Advies bekijken'], '/mvp');
   await assertRoute(
     '/mvp/recommendation?tier=basis_plus&addons=stroomuitval,drinkwater,evacuatie&adults=2&children=0&pets=0&duration_hours=72',
     200,
-    ['Je pakketadvies', 'Core items', 'Accessoires', 'QA summary'],
+    ['Je pakketadvies', 'Kern van je pakket', 'Benodigde accessoires', 'Wat kun je nu doen?'],
     'MVP-startpakket route',
   );
   await assertRoute(
     '/mvp/recommendation?tier=basis_plus&addons=stroomuitval,drinkwater,voedsel_bereiding,hygiene_sanitatie_afval,ehbo_persoonlijke_zorg,warmte_droog_shelter_light,evacuatie,taken_profielen&adults=2&children=1&pets=1&duration_hours=72',
     200,
-    ['Je pakketadvies', 'Tasks', 'Warnings', 'QA summary'],
+    ['Je pakketadvies', 'Persoonlijke taken', 'Aandachtspunten', 'Wat kun je nu doen?'],
     'Complete 72u POC route',
   );
   await assertRoute('/internal/recommendation-poc?addon=drinkwater&tier=basis_plus', 200, ['Interne recommendation POC'], 'internal recommendation POC');

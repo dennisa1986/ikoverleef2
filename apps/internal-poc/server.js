@@ -65,25 +65,25 @@ const ADDON_PRESETS = [
 ];
 
 const MVP_ADDONS = [
-  { slug: 'stroomuitval', label: 'Stroomuitval', note: 'Licht, laden en informatie.' },
-  { slug: 'drinkwater', label: 'Drinkwater', note: 'Voorraad en behandeling.' },
-  { slug: 'voedsel_bereiding', label: 'Voedsel', note: 'Voedselzekerheid en bereiding.' },
-  { slug: 'hygiene_sanitatie_afval', label: 'Hygiene', note: 'Reiniging, sanitatie en afval.' },
-  { slug: 'ehbo_persoonlijke_zorg', label: 'EHBO', note: 'Wondzorg en persoonlijke zorg.' },
-  { slug: 'warmte_droog_shelter_light', label: 'Warmte/droog', note: 'Warmtebehoud en droog blijven.' },
-  { slug: 'evacuatie', label: 'Evacuatie', note: 'Dragen, signaleren en documenten.' },
-  { slug: 'taken_profielen', label: 'Taken', note: 'Checks naast producten.' },
+  { slug: 'stroomuitval', label: 'Stroomuitval', note: 'Licht, laden en informatie.', group: 'Basiszekerheid' },
+  { slug: 'drinkwater', label: 'Drinkwater', note: 'Voorraad en behandeling.', group: 'Basiszekerheid' },
+  { slug: 'voedsel_bereiding', label: 'Voedsel & bereiding', note: 'Voedselzekerheid en bereiding.', group: 'Basiszekerheid' },
+  { slug: 'hygiene_sanitatie_afval', label: 'Hygiene, sanitatie & afval', note: 'Reiniging, sanitatie en afval.', group: 'Zorg & huishouden' },
+  { slug: 'ehbo_persoonlijke_zorg', label: 'EHBO & persoonlijke zorg', note: 'Wondzorg en persoonlijke zorg.', group: 'Zorg & huishouden' },
+  { slug: 'warmte_droog_shelter_light', label: 'Warmte, droog blijven & beschutting-light', note: 'Warmtebehoud en droog blijven.', group: 'Omgeving & verplaatsing' },
+  { slug: 'evacuatie', label: 'Evacuatie & documenten', note: 'Dragen, signaleren en documenten.', group: 'Omgeving & verplaatsing' },
+  { slug: 'taken_profielen', label: 'Persoonlijke checks en taken', note: 'Checks naast producten.', group: 'Persoonlijke checks' },
 ];
 
 const MVP_PRESETS = [
   {
     slug: 'mvp_start',
-    label: 'Aanbevolen MVP-start',
+    label: 'Aanbevolen startadvies',
     addon_slugs: ['stroomuitval', 'drinkwater', 'evacuatie'],
   },
   {
     slug: 'complete_72h',
-    label: 'Complete 72u POC',
+    label: 'Volledige 72-uurs demo',
     addon_slugs: ALLOWED_ADDONS,
   },
 ];
@@ -135,11 +135,11 @@ function fmtBool(value) {
 
 function sectionTitle(key) {
   switch (key) {
-    case 'core_items': return 'Kernitems (Core items)';
-    case 'accessories': return 'Accessoires';
-    case 'supporting_items': return 'Ondersteunend (Supporting items)';
-    case 'backup_items': return 'Backup (Backup items)';
-    case 'optional_additions': return 'Optioneel (Optional additions)';
+    case 'core_items': return 'Kern van je pakket';
+    case 'accessories': return 'Benodigde accessoires';
+    case 'supporting_items': return 'Ondersteunend';
+    case 'backup_items': return 'Backup';
+    case 'optional_additions': return 'Optioneel';
     default: return key;
   }
 }
@@ -620,11 +620,11 @@ function mvpQueryForInput(input) {
 
 function sectionDescription(key) {
   switch (key) {
-    case 'core_items': return 'Essentiele items voor primaire dekking.';
+    case 'core_items': return 'De belangrijkste producten voor jouw gekozen situatie.';
     case 'accessories': return 'Benodigdheden die gekozen oplossingen bruikbaar maken.';
-    case 'supporting_items': return 'Ondersteunend: nuttig, maar geen vervanging van primaire dekking.';
+    case 'supporting_items': return 'Ondersteunend: nuttig, maar geen vervanging van de kern.';
     case 'backup_items': return 'Reserve of fallback, met beperkingen in de uitleg.';
-    case 'optional_additions': return 'Ruimte voor latere uitbreidingen. Mag nu leeg zijn.';
+    case 'optional_additions': return 'Ruimte voor latere uitbreidingen. Mag leeg zijn.';
     default: return '';
   }
 }
@@ -663,6 +663,7 @@ function renderMvpStyles() {
     .choice { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fbfcfb; min-height: 92px; }
     .choice input { width: auto; margin-right: 8px; }
     .choice strong { display: inline-block; margin-bottom: 4px; }
+    .addon-group { margin-top: 16px; }
     .preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .button { display: inline-block; border: 0; border-radius: 6px; background: var(--accent); color: white; padding: 11px 15px; text-decoration: none; font-weight: 700; cursor: pointer; font: inherit; }
     .button.secondary { background: white; color: var(--accent); border: 1px solid var(--accent); }
@@ -682,6 +683,8 @@ function renderMvpStyles() {
     th, td { border-bottom: 1px solid var(--line); padding: 8px 7px; text-align: left; vertical-align: top; }
     th { background: #eef2ef; font-size: 12px; text-transform: uppercase; }
     .notice { border-left: 4px solid var(--warn); background: var(--warn-soft); padding: 12px; border-radius: 4px; }
+    .action-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; padding: 0; list-style: none; }
+    .action-list li { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fbfcfb; }
     .empty { color: var(--muted); padding: 12px; border: 1px dashed var(--line); border-radius: 6px; background: #fbfcfb; }
     @media (max-width: 760px) { main, header { padding-left: 16px; padding-right: 16px; } .item-top { display: block; } .qty { display: inline-block; margin-top: 8px; } }
   `;
@@ -693,25 +696,48 @@ function renderMvpConfiguratorPage(input = DEFAULT_POC_INPUT) {
     const presetInput = { ...input, addon_slugs: preset.addon_slugs };
     return `<a class="button secondary" href="/mvp?${mvpQueryForInput(presetInput)}">${escapeHtml(preset.label)}</a>`;
   }).join('');
+  const groupedAddons = [...new Set(MVP_ADDONS.map((addon) => addon.group))].map((group) => {
+    const addons = MVP_ADDONS.filter((addon) => addon.group === group);
+    return `
+      <section class="addon-group">
+        <h3>${escapeHtml(group)}</h3>
+        <div class="grid" style="margin-top:10px">
+          ${addons.map((addon) => `
+            <label class="choice">
+              <input type="checkbox" name="addons" value="${escapeHtml(addon.slug)}" ${selected.has(addon.slug) ? 'checked' : ''}>
+              <strong>${escapeHtml(addon.label)}</strong>
+              <div class="subtle">${escapeHtml(addon.note)}</div>
+            </label>`).join('')}
+        </div>
+      </section>`;
+  }).join('');
 
   return `<!doctype html>
 <html lang="nl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ik overleef - MVP configurator</title>
+  <title>Ik overleef - advies samenstellen</title>
   <style>${renderMvpStyles()}</style>
 </head>
 <body>
   <header>
-    <h1>Ik overleef</h1>
-    <div class="subtle">Stel een praktisch noodpakketadvies samen op basis van bestaande scenario's.</div>
+    <h1>Stel je noodpakketadvies samen</h1>
+    <div class="subtle">Kies je huishouden, pakketniveau en situaties. Je krijgt daarna een uitlegbaar advies met producten, taken en aandachtspunten.</div>
   </header>
   <main>
+    <section class="band">
+      <div class="section-head">
+        <h2>Wat krijg je?</h2>
+        <span class="pill good">Adviespreview</span>
+      </div>
+      <p>Ik overleef maakt een praktisch noodpakketadvies op basis van je keuzes. Het advies laat zien welke producten logisch zijn, welke acties je zelf moet doen en welke aandachtspunten belangrijk zijn.</p>
+      <p class="subtle">Dit is een adviespreview, nog geen webshop of bestelling.</p>
+    </section>
     <form class="band" method="get" action="/mvp/recommendation">
       <div class="section-head">
-        <h2>Configurator</h2>
-        <span class="pill good">MVP</span>
+        <h2>Je keuzes</h2>
+        <span class="pill good">Nog geen bestelling</span>
       </div>
       <input type="hidden" name="package" value="basispakket">
       <div class="form-grid">
@@ -721,6 +747,7 @@ function renderMvpConfiguratorPage(input = DEFAULT_POC_INPUT) {
             <option value="basis" ${input.tier_slug === 'basis' ? 'selected' : ''}>Basis</option>
             <option value="basis_plus" ${input.tier_slug === 'basis_plus' ? 'selected' : ''}>Basis+</option>
           </select>
+          <div class="subtle">Basis is functioneel en nuchter. Basis+ kiest robuuster en met meer comfort of backup waar zinvol.</div>
         </div>
         <div>
           <label for="adults">Volwassenen</label>
@@ -739,15 +766,9 @@ function renderMvpConfiguratorPage(input = DEFAULT_POC_INPUT) {
           <input id="duration_hours" name="duration_hours" type="number" min="24" step="24" value="${escapeHtml(input.duration_hours)}">
         </div>
       </div>
-      <h3 style="margin-top:18px">Add-ons</h3>
-      <div class="grid" style="margin-top:10px">
-        ${MVP_ADDONS.map((addon) => `
-          <label class="choice">
-            <input type="checkbox" name="addons" value="${escapeHtml(addon.slug)}" ${selected.has(addon.slug) ? 'checked' : ''}>
-            <strong>${escapeHtml(addon.label)}</strong>
-            <div class="subtle">${escapeHtml(addon.note)}</div>
-          </label>`).join('')}
-      </div>
+      <h3 style="margin-top:18px">Situaties en checks</h3>
+      <p class="subtle">Kies waarvoor je voorbereid wilt zijn. Je kunt een startadvies kiezen of zelf situaties combineren.</p>
+      ${groupedAddons}
       <div class="preset-row">
         ${presetLinks}
       </div>
@@ -768,35 +789,20 @@ function renderMvpItemCard(line, sectionKey) {
           <h3>${escapeHtml(line.title)}</h3>
           <div style="margin-top:6px">
             <span class="pill good">${escapeHtml(sectionTitle(sectionKey))}</span>
-            <span class="pill">${escapeHtml(line.runtime_role)}</span>
           </div>
         </div>
         <div class="qty">x${escapeHtml(line.quantity)}</div>
       </div>
       <p>${escapeHtml(line.explanation_public)}</p>
       <details>
-        <summary>Uitleg en details</summary>
-        <p class="subtle">SKU: ${escapeHtml(line.sku)}</p>
-        <h3>Bronnen</h3>
-        <table>
-          <thead><tr><th>Need</th><th>Type</th><th>Uitleg</th></tr></thead>
-          <tbody>
-            ${line.sources.map((src) => `<tr><td>${escapeHtml(src.scenario_need || '')}</td><td>${escapeHtml(src.source_type)}</td><td>${escapeHtml(src.explanation || '')}</td></tr>`).join('')}
-          </tbody>
-        </table>
-        <h3 style="margin-top:12px">Dekking</h3>
-        <table>
-          <thead><tr><th>Need</th><th>Capability</th><th>Sterkte</th><th>Status</th></tr></thead>
-          <tbody>
-            ${line.coverage.map((cov) => `<tr><td>${escapeHtml(cov.need)}</td><td>${escapeHtml(cov.capability)}</td><td>${escapeHtml(cov.coverage_strength)}</td><td>${fmtBool(cov.counted_as_sufficient)}</td></tr>`).join('')}
-          </tbody>
-        </table>
+        <summary>Waarom staat dit in je advies?</summary>
+        <p>${escapeHtml(line.explanation_public || 'Dit item volgt uit je gekozen situaties en pakketniveau.')}</p>
         ${line.usage_constraints.length ? `
           <h3 style="margin-top:12px">Waarschuwingen</h3>
           <table>
-            <thead><tr><th>Type</th><th>Waarschuwing</th></tr></thead>
+            <thead><tr><th>Onderwerp</th><th>Waarschuwing</th></tr></thead>
             <tbody>
-              ${line.usage_constraints.map((rule) => `<tr><td>${escapeHtml(rule.constraint_type)}</td><td>${escapeHtml(rule.public_warning)}</td></tr>`).join('')}
+              ${line.usage_constraints.map((rule) => `<tr><td>${escapeHtml(rule.constraint_type.replaceAll('_', ' '))}</td><td>${escapeHtml(rule.public_warning)}</td></tr>`).join('')}
             </tbody>
           </table>` : ''}
       </details>
@@ -818,11 +824,31 @@ function renderMvpSection(data, key) {
     </section>`;
 }
 
+function renderMvpCombinedSupportSection(data) {
+  const groups = [
+    ['supporting_items', data.sections.supporting_items || []],
+    ['backup_items', data.sections.backup_items || []],
+    ['optional_additions', data.sections.optional_additions || []],
+  ];
+  const lines = groups.flatMap(([key, sectionLines]) => sectionLines.map((line) => ({ ...line, displaySectionKey: key })));
+  return `
+    <section class="band">
+      <div class="section-head">
+        <div>
+          <h2>Backup en ondersteuning</h2>
+          <div class="subtle">Aanvullende of reserve-oplossingen. Ze vervangen de kern van je pakket niet.</div>
+        </div>
+        <span class="pill ${lines.length ? 'good' : ''}">${lines.length}</span>
+      </div>
+      ${lines.length ? lines.map((line) => renderMvpItemCard(line, line.displaySectionKey)).join('') : '<div class="empty">Geen backup of ondersteunende items voor deze adviesrun.</div>'}
+    </section>`;
+}
+
 function renderMvpTasks(data) {
   return `
     <section class="band">
       <div class="section-head">
-        <h2>Tasks</h2>
+        <h2>Persoonlijke taken</h2>
         <span class="pill ${data.tasks.length ? 'good' : ''}">${data.tasks.length}</span>
       </div>
       ${data.tasks.length ? data.tasks.map((task) => `
@@ -849,6 +875,80 @@ function renderMvpWarnings(data) {
     </section>`;
 }
 
+function warningGroupFor(warning) {
+  const text = `${warning.warning_type || ''} ${warning.item_title || ''} ${warning.public_warning || ''} ${warning.internal_notes || ''}`.toLowerCase();
+  if (/water|drink|voedsel|food|koel|houdbaar|filter|jerrycan/.test(text)) return 'Water & voedselveiligheid';
+  if (/gas|vuur|brand|hitte|ventilatie|koken|verwarmen|fornuis|lighter|ontsteking/.test(text)) return 'Vuur, gas & gebruiksveiligheid';
+  if (/ehbo|medisch|wond|handschoen|infect|thermometer|medicatie|pijn/.test(text)) return 'Medisch & EHBO';
+  if (/evacuatie|document|fluit|reflect|tas|sleutel|cash|contact/.test(text)) return 'Evacuatie & documenten';
+  if (/opslag|houdbaar|expiry|kind|droog|koel|bewaar/.test(text)) return 'Opslag & houdbaarheid';
+  return 'Persoonlijke checks';
+}
+
+function groupedWarnings(warnings) {
+  const deduped = [];
+  const seen = new Set();
+  for (const warning of warnings) {
+    const key = String(warning.public_warning || warning.internal_notes || warning.warning_type || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push({ ...warning, group: warningGroupFor(warning) });
+  }
+  return deduped.reduce((map, warning) => {
+    if (!map.has(warning.group)) map.set(warning.group, []);
+    map.get(warning.group).push(warning);
+    return map;
+  }, new Map());
+}
+
+function renderGroupedMvpWarnings(data) {
+  const grouped = groupedWarnings(data.warnings);
+  const groups = [...grouped.entries()];
+  const total = groups.reduce((sum, [, warnings]) => sum + warnings.length, 0);
+  return `
+    <section class="band">
+      <div class="section-head">
+        <div>
+          <h2>Aandachtspunten</h2>
+          <div class="subtle">Belangrijke waarschuwingen, gegroepeerd en ontdubbeld.</div>
+        </div>
+        <span class="pill ${total ? 'warn' : 'good'}">${total}</span>
+      </div>
+      ${groups.length ? groups.map(([group, warnings]) => `
+        <div style="margin-top:14px">
+          <h3>${escapeHtml(group)}</h3>
+          ${warnings.slice(0, 2).map((warning) => `
+            <div class="notice" style="margin-top:10px">
+              <strong>${escapeHtml(warning.item_title || group)}</strong>
+              <div>${escapeHtml(warning.public_warning || warning.internal_notes || '')}</div>
+            </div>`).join('')}
+          ${warnings.length > 2 ? `<details><summary>Toon meer aandachtspunten (${warnings.length - 2})</summary>${warnings.slice(2).map((warning) => `
+            <div class="notice" style="margin-top:10px">
+              <strong>${escapeHtml(warning.item_title || group)}</strong>
+              <div>${escapeHtml(warning.public_warning || warning.internal_notes || '')}</div>
+            </div>`).join('')}</details>` : ''}
+        </div>`).join('') : '<div class="empty">Geen aandachtspunten voor deze run.</div>'}
+    </section>`;
+}
+
+function renderNextSteps() {
+  return `
+    <section class="band">
+      <div class="section-head">
+        <h2>Wat kun je nu doen?</h2>
+        <span class="pill good">Volgende stap</span>
+      </div>
+      <ul class="action-list">
+        <li>Print of bewaar deze checklist.</li>
+        <li>Gebruik dit als boodschappenlijst.</li>
+        <li>Bespreek dit advies met je huishouden.</li>
+        <li>Vraag later een pakketvoorstel aan. In deze demo wordt niets opgeslagen of verzonden.</li>
+        <li><a href="/internal/recommendation-poc">Bekijk interne onderbouwing</a> voor test en review.</li>
+      </ul>
+      <p class="subtle">Prijs en gewicht volgen in de commerciele pakketfase.</p>
+    </section>`;
+}
+
 function renderMvpRecommendationPage(data) {
   const query = mvpQueryForInput(data.input);
   const counts = {
@@ -872,13 +972,20 @@ function renderMvpRecommendationPage(data) {
 <body>
   <header>
     <h1>Je pakketadvies</h1>
-    <div class="subtle">Gebaseerd op bestaande scenario's, productregels, tasks, warnings en QA-output.</div>
+    <div class="subtle">Dit advies laat zien welke producten en acties logisch zijn voor jouw gekozen situatie. Je kunt dit gebruiken als checklist of als basis voor een later pakketvoorstel. Dit is nog geen bestelling.</div>
   </header>
   <main>
     <section class="band">
       <div class="section-head">
-        <h2>Samenvatting</h2>
-        <span class="pill ${data.qa_summary.status === 'clean' ? 'good' : 'warn'}">QA ${escapeHtml(data.qa_summary.status)}</span>
+        <h2>Adviespreview</h2>
+        <span class="pill good">Geen bestelling</span>
+      </div>
+      <p>Demo-advies: productnamen en leveranciersinformatie kunnen placeholderdata zijn. De samenstelling toont de advieslogica, niet definitieve verkoopvoorraad.</p>
+    </section>
+    <section class="band">
+      <div class="section-head">
+        <h2>Jouw keuzes</h2>
+        <span class="pill good">${escapeHtml(data.qa_summary.status === 'clean' ? 'controle zonder blokkades' : 'controle vraagt aandacht')}</span>
       </div>
       <div class="metrics">
         <div class="metric"><span>Pakket</span><strong>${escapeHtml(data.input.package_slug)}</strong></div>
@@ -888,7 +995,7 @@ function renderMvpRecommendationPage(data) {
         <div class="metric"><span>Kinderen</span><strong>${escapeHtml(data.input.household_children)}</strong></div>
         <div class="metric"><span>Huisdieren</span><strong>${escapeHtml(data.input.household_pets)}</strong></div>
         <div class="metric"><span>Duur</span><strong>${escapeHtml(data.input.duration_hours)}u</strong></div>
-        <div class="metric"><span>Kernitems</span><strong>${counts.core}</strong></div>
+        <div class="metric"><span>Kern</span><strong>${counts.core}</strong></div>
         <div class="metric"><span>Accessoires</span><strong>${counts.accessories}</strong></div>
         <div class="metric"><span>Ondersteunend</span><strong>${counts.supporting}</strong></div>
         <div class="metric"><span>Backup</span><strong>${counts.backup}</strong></div>
@@ -898,37 +1005,15 @@ function renderMvpRecommendationPage(data) {
       <div style="margin-top:12px">
         ${data.input.addon_slugs.map((slug) => `<span class="pill good">${escapeHtml(slug)}</span>`).join('')}
       </div>
-      <div style="margin-top:16px">
-        <a class="button secondary" href="/mvp?${query}">Keuzes aanpassen</a>
-        <a class="button secondary" href="/internal/backoffice-poc">Interne backoffice bekijken</a>
-      </div>
+      <div style="margin-top:16px"><a class="button secondary" href="/mvp?${query}">Keuzes aanpassen</a></div>
     </section>
 
     ${renderMvpSection(data, 'core_items')}
     ${renderMvpSection(data, 'accessories')}
-    ${renderMvpSection(data, 'supporting_items')}
-    ${renderMvpSection(data, 'backup_items')}
-    ${renderMvpSection(data, 'optional_additions')}
+    ${renderMvpCombinedSupportSection(data)}
     ${renderMvpTasks(data)}
-    ${renderMvpWarnings(data)}
-
-    <section class="band">
-      <div class="section-head">
-        <h2>Interne QA-status (QA summary)</h2>
-        <span class="pill ${data.qa_summary.status === 'clean' ? 'good' : 'warn'}">${escapeHtml(data.qa_summary.status)}</span>
-      </div>
-      <div class="metrics">
-        <div class="metric"><span>blocking</span><strong>${data.qa_summary.blocking_total}</strong></div>
-        <div class="metric"><span>warning/context</span><strong>${data.qa_summary.warning_total}</strong></div>
-        <div class="metric"><span>without sources</span><strong>${data.qa_summary.generated_lines_without_sources}</strong></div>
-        <div class="metric"><span>type mismatch</span><strong>${data.qa_summary.generated_line_producttype_mismatch}</strong></div>
-      </div>
-      <details>
-        <summary>Debug run details</summary>
-        <p>Run ID: ${escapeHtml(data.run.id)}</p>
-        <p>Actieve add-ons: ${data.input.addon_slugs.map((slug) => escapeHtml(slug)).join(', ')}</p>
-      </details>
-    </section>
+    ${renderGroupedMvpWarnings(data)}
+    ${renderNextSteps()}
   </main>
 </body>
 </html>`;

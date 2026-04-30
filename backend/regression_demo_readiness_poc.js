@@ -169,17 +169,17 @@ function checkEnvironmentFiles() {
 async function checkRoutes() {
   const mvp = await requestPath('/mvp');
   assertEqual(mvp.statusCode, 200, '/mvp status');
-  assertContains(mvp.body, ['Configurator', 'Advies bekijken'], '/mvp');
+  assertContains(mvp.body, ['Stel je noodpakketadvies samen', 'Advies bekijken'], '/mvp');
   assertNoForbiddenLinksOrCtas(mvp.body, '/mvp');
 
   const recommendation = await requestPath('/mvp/recommendation?tier=basis_plus&addons=stroomuitval,drinkwater,evacuatie&adults=2&children=0&pets=0&duration_hours=72');
   assertEqual(recommendation.statusCode, 200, '/mvp/recommendation status');
-  assertContains(recommendation.body, ['Je pakketadvies', 'Kernitems', 'Interne QA-status'], '/mvp/recommendation');
+  assertContains(recommendation.body, ['Je pakketadvies', 'Kern van je pakket', 'Wat kun je nu doen?'], '/mvp/recommendation');
   assertNoForbiddenLinksOrCtas(recommendation.body, '/mvp/recommendation');
 
   const invalidInput = await requestPath('/mvp/recommendation?tier=bogus&addons=unknown&adults=-4&children=-2&pets=-3&duration_hours=1');
   assertEqual(invalidInput.statusCode, 200, 'invalid input fallback status');
-  assertContains(invalidInput.body, ['Je pakketadvies', 'Kernitems'], 'invalid input fallback');
+  assertContains(invalidInput.body, ['Je pakketadvies', 'Kern van je pakket'], 'invalid input fallback');
   assertNoForbiddenLinksOrCtas(invalidInput.body, 'invalid input fallback');
 }
 

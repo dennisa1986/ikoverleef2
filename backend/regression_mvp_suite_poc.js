@@ -28,12 +28,12 @@ const ROUTE_SMOKES = [
   {
     path: '/mvp',
     label: 'MVP configurator',
-    mustContain: ['Configurator', 'Advies bekijken'],
+    mustContain: ['Stel je noodpakketadvies samen', 'Advies bekijken'],
   },
   {
     path: '/mvp/recommendation?tier=basis_plus&addons=stroomuitval,drinkwater,evacuatie&adults=2&children=0&pets=0&duration_hours=72',
     label: 'MVP recommendation',
-    mustContain: ['Je pakketadvies', 'Core items', 'QA summary'],
+    mustContain: ['Je pakketadvies', 'Kern van je pakket', 'Wat kun je nu doen?'],
   },
   {
     path: '/internal/recommendation-poc?addon=drinkwater&tier=basis_plus',
