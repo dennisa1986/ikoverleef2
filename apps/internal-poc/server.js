@@ -88,6 +88,21 @@ const MVP_PRESETS = [
   },
 ];
 
+const DEMO_PRICE_BANDS = {
+  basis: {
+    label: 'Basis',
+    demoFromPrice: 149,
+    description: 'Functioneel en nuchter, gericht op de belangrijkste behoeften.',
+  },
+  basis_plus: {
+    label: 'Basis+',
+    demoFromPrice: 249,
+    description: 'Robuuster, met meer comfort en backup waar zinvol.',
+  },
+};
+
+const FUNNEL_DEFAULT_ADDONS = ['stroomuitval', 'drinkwater', 'evacuatie'];
+
 function parsePositiveInt(value, fallback) {
   if (value === null || value === undefined || value === '') return fallback;
   const parsed = Number(value);
@@ -616,6 +631,362 @@ function mvpQueryForInput(input) {
     pets: String(input.household_pets),
     duration_hours: String(input.duration_hours),
   }).toString();
+}
+
+function funnelInputFromSearchParams(params) {
+  const addonValues = params.getAll('addons').filter(Boolean);
+  const addonValue = addonValues.length
+    ? addonValues.join(',')
+    : (params.get('addon') || FUNNEL_DEFAULT_ADDONS.join(','));
+  return inputForSelection(params.get('tier') || 'basis_plus', addonValue, {
+    household_adults: params.get('adults'),
+    household_children: params.get('children'),
+    household_pets: params.get('pets'),
+    duration_hours: params.get('duration_hours'),
+  });
+}
+
+function funnelQueryForInput(input, extra = {}) {
+  const params = new URLSearchParams({
+    package: input.package_slug,
+    tier: input.tier_slug,
+    addons: input.addon_slugs.join(','),
+    adults: String(input.household_adults),
+    children: String(input.household_children),
+    pets: String(input.household_pets),
+    duration_hours: String(input.duration_hours),
+  });
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  }
+  return params.toString();
+}
+
+function demoPriceText(tierSlug) {
+  const price = DEMO_PRICE_BANDS[tierSlug] || DEMO_PRICE_BANDS.basis_plus;
+  return `indicatief vanaf €${price.demoFromPrice}`;
+}
+
+function tierLabel(tierSlug) {
+  return (DEMO_PRICE_BANDS[tierSlug] || DEMO_PRICE_BANDS.basis_plus).label;
+}
+
+function renderFunnelProgress(activeStep) {
+  const steps = [
+    ['start', 'Pakket'],
+    ['addons', 'Situaties'],
+    ['huishouden', 'Huishouden'],
+    ['advies', 'Advies'],
+    ['account', 'Lidmaatschap'],
+    ['checkout', 'Preview'],
+  ];
+  return `<nav class="preset-row" aria-label="Voortgang">${steps.map(([key, label], index) => `
+    <span class="pill ${key === activeStep ? 'good' : ''}">Stap ${index + 1}: ${escapeHtml(label)}</span>`).join('')}</nav>`;
+}
+
+function renderFunnelShell(title, subtitle, activeStep, body) {
+  return `<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ik overleef - ${escapeHtml(title)}</title>
+  <style>${renderMvpStyles()}</style>
+</head>
+<body>
+  <header>
+    <h1>${escapeHtml(title)}</h1>
+    <div class="subtle">${escapeHtml(subtitle)}</div>
+  </header>
+  <main>
+    ${activeStep ? `<section class="band">${renderFunnelProgress(activeStep)}</section>` : ''}
+    ${body}
+  </main>
+</body>
+</html>`;
+}
+
+function renderPublicHomePage() {
+  return renderFunnelShell(
+    'Ik overleef',
+    'Nuchtere voorbereiding met een uitlegbaar noodpakketadvies.',
+    '',
+    `
+    <section class="band">
+      <div class="section-head">
+        <h2>Stel in enkele stappen je noodpakketadvies samen</h2>
+        <span class="pill good">Demo-preview</span>
+      </div>
+      <p>Ik overleef helpt je rustig en praktisch nadenken over voorbereiding thuis en onderweg. Je kiest je huishouden, pakketniveau en situaties; daarna maakt de bestaande adviesengine een overzicht met producten, taken en aandachtspunten.</p>
+      <p class="subtle">Deze publieke funnel is een preview. Het is nog geen webshop, geen definitieve bestelling en geen definitieve verkoopvoorraad. Prijzen zijn indicatief totdat assortiment en leveranciers definitief zijn ingevuld.</p>
+      <a class="button" href="/pakket/start">Start je pakketadvies</a>
+      <a class="button secondary" href="/mvp" style="margin-left:8px">Bekijk MVP-adviespreview</a>
+    </section>
+    <section class="band">
+      <div class="grid">
+        <div class="choice"><strong>Uitlegbaar advies</strong><div class="subtle">Je ziet waarom items, taken en aandachtspunten in je advies staan.</div></div>
+        <div class="choice"><strong>Geen paniektaal</strong><div class="subtle">De flow is gericht op nuchtere voorbereiding en praktische keuzes.</div></div>
+        <div class="choice"><strong>Nog geen verkooptransactie</strong><div class="subtle">Deze versie simuleert de commerciële route zonder bestelling of betaling.</div></div>
+      </div>
+    </section>`,
+  );
+}
+
+function renderPackageStartPage(input) {
+  const priceDisclaimer = 'Prijsindicatie voor demo. Definitieve prijs volgt na product- en leveranciersinvulling.';
+  return renderFunnelShell(
+    'Stap 1 — Kies je pakketniveau',
+    'Kies Basis of Basis+. Je kunt dit later nog aanpassen.',
+    'start',
+    `
+    <form class="band" method="get" action="/pakket/addons">
+      <input type="hidden" name="package" value="basispakket">
+      <div class="grid">
+        ${Object.entries(DEMO_PRICE_BANDS).map(([slug, tier]) => `
+          <label class="choice">
+            <input type="radio" name="tier" value="${escapeHtml(slug)}" ${input.tier_slug === slug ? 'checked' : ''}>
+            <strong>${escapeHtml(tier.label)}</strong>
+            <div class="subtle">${escapeHtml(tier.description)}</div>
+            <div class="pill good" style="margin-top:8px">${escapeHtml(demoPriceText(slug))}</div>
+          </label>`).join('')}
+      </div>
+      <p class="subtle">${escapeHtml(priceDisclaimer)}</p>
+      <button class="button" type="submit">Verder naar situaties</button>
+    </form>
+    <section class="band">
+      <h2>Wat betekent het verschil?</h2>
+      <p><strong>Basis</strong> is functioneel, betaalbaarder en gericht op de belangrijkste behoeften. <strong>Basis+</strong> is robuuster, met ruimere keuzes, comfort en backup waar dat zinvol is.</p>
+    </section>`,
+  );
+}
+
+function renderPackageAddonsPage(input) {
+  const selected = new Set(input.addon_slugs || []);
+  const groupedAddons = [...new Set(MVP_ADDONS.map((addon) => addon.group))].map((group) => {
+    const addons = MVP_ADDONS.filter((addon) => addon.group === group);
+    return `
+      <section class="addon-group">
+        <h3>${escapeHtml(group)}</h3>
+        <div class="grid" style="margin-top:10px">
+          ${addons.map((addon) => `
+            <label class="choice">
+              <input type="checkbox" name="addons" value="${escapeHtml(addon.slug)}" ${selected.has(addon.slug) ? 'checked' : ''}>
+              <strong>${escapeHtml(addon.label)}</strong>
+              <div class="subtle">${escapeHtml(addon.note)}</div>
+            </label>`).join('')}
+        </div>
+      </section>`;
+  }).join('');
+
+  return renderFunnelShell(
+    'Stap 2 — Waar wil je op voorbereid zijn?',
+    'Kies situaties en persoonlijke checks. De add-ons activeren scenario’s in de bestaande engine.',
+    'addons',
+    `
+    <form class="band" method="get" action="/pakket/huishouden">
+      <input type="hidden" name="package" value="${escapeHtml(input.package_slug)}">
+      <input type="hidden" name="tier" value="${escapeHtml(input.tier_slug)}">
+      ${groupedAddons}
+      <div style="margin-top:18px">
+        <a class="button secondary" href="/pakket/start?${funnelQueryForInput(input)}">Terug</a>
+        <button class="button" type="submit">Verder naar huishouden</button>
+      </div>
+    </form>`,
+  );
+}
+
+function renderPackageHouseholdPage(input) {
+  return renderFunnelShell(
+    'Stap 3 — Vul je huishouden in',
+    'Deze gegevens worden alleen runtime gebruikt voor het advies. Er wordt niets opgeslagen.',
+    'huishouden',
+    `
+    <form class="band" method="get" action="/pakket/advies">
+      <input type="hidden" name="package" value="${escapeHtml(input.package_slug)}">
+      <input type="hidden" name="tier" value="${escapeHtml(input.tier_slug)}">
+      <input type="hidden" name="addons" value="${escapeHtml(input.addon_slugs.join(','))}">
+      <div class="form-grid">
+        <div>
+          <label for="adults">Volwassenen</label>
+          <input id="adults" name="adults" type="number" min="1" step="1" value="${escapeHtml(input.household_adults)}">
+        </div>
+        <div>
+          <label for="children">Kinderen</label>
+          <input id="children" name="children" type="number" min="0" step="1" value="${escapeHtml(input.household_children)}">
+        </div>
+        <div>
+          <label for="pets">Huisdieren</label>
+          <input id="pets" name="pets" type="number" min="0" step="1" value="${escapeHtml(input.household_pets)}">
+        </div>
+        <div>
+          <label for="duration_hours">Duur in uren</label>
+          <input id="duration_hours" name="duration_hours" type="number" min="24" step="24" value="${escapeHtml(input.duration_hours)}">
+          <div class="subtle">Standaard 72 uur.</div>
+        </div>
+      </div>
+      <p class="subtle">Geen persoonsgegevens, account of profielopslag in deze demo.</p>
+      <div style="margin-top:18px">
+        <a class="button secondary" href="/pakket/addons?${funnelQueryForInput(input)}">Terug</a>
+        <button class="button" type="submit">Adviesoverzicht bekijken</button>
+      </div>
+    </form>`,
+  );
+}
+
+function recommendationCounts(data) {
+  const supportCount = data.sections.supporting_items.length + data.sections.backup_items.length + data.sections.optional_additions.length;
+  return {
+    core: data.sections.core_items.length,
+    accessories: data.sections.accessories.length,
+    support: supportCount,
+    tasks: data.tasks.length,
+    warnings: data.warnings.length,
+  };
+}
+
+function renderCompactLineList(lines, limit = 5) {
+  if (!lines.length) return '<div class="empty">Geen regels in deze sectie.</div>';
+  return `<ul>${lines.slice(0, limit).map((line) => `<li><strong>${escapeHtml(line.title)}</strong> <span class="subtle">x${escapeHtml(line.quantity)}</span></li>`).join('')}</ul>${lines.length > limit ? `<div class="subtle">En ${lines.length - limit} extra regels in het volledige advies.</div>` : ''}`;
+}
+
+function renderPackageAdvicePage(data) {
+  const input = data.input;
+  const query = funnelQueryForInput(input);
+  const counts = recommendationCounts(data);
+  const supportLines = [
+    ...data.sections.supporting_items,
+    ...data.sections.backup_items,
+    ...data.sections.optional_additions,
+  ];
+  return renderFunnelShell(
+    'Stap 4 — Adviesoverzicht',
+    'Controleer je keuzes en het gegenereerde advies. Je kunt terug om aan te passen.',
+    'advies',
+    `
+    <section class="band">
+      <div class="section-head">
+        <h2>Samenvatting</h2>
+        <span class="pill good">${escapeHtml(demoPriceText(input.tier_slug))}</span>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>Pakketniveau</span><strong>${escapeHtml(tierLabel(input.tier_slug))}</strong></div>
+        <div class="metric"><span>Add-ons</span><strong>${input.addon_slugs.length}</strong></div>
+        <div class="metric"><span>Huishouden</span><strong>${escapeHtml(input.household_adults)} / ${escapeHtml(input.household_children)} / ${escapeHtml(input.household_pets)}</strong></div>
+        <div class="metric"><span>Duur</span><strong>${escapeHtml(input.duration_hours)}u</strong></div>
+        <div class="metric"><span>Kernitems</span><strong>${counts.core}</strong></div>
+        <div class="metric"><span>Accessoires</span><strong>${counts.accessories}</strong></div>
+        <div class="metric"><span>Taken</span><strong>${counts.tasks}</strong></div>
+        <div class="metric"><span>Aandachtspunten</span><strong>${counts.warnings}</strong></div>
+      </div>
+      <p class="subtle">Prijsindicatie voor demo. Definitieve prijs volgt na product- en leveranciersinvulling. Dit is geen echte order.</p>
+    </section>
+    <section class="band">
+      <h2>Kernitems</h2>
+      ${renderCompactLineList(data.sections.core_items)}
+    </section>
+    <section class="band">
+      <h2>Accessoires</h2>
+      ${renderCompactLineList(data.sections.accessories)}
+    </section>
+    <section class="band">
+      <h2>Backup/ondersteuning</h2>
+      ${renderCompactLineList(supportLines)}
+    </section>
+    <section class="band">
+      <h2>Taken en aandachtspunten</h2>
+      <p>${counts.tasks} persoonlijke taken en ${counts.warnings} aandachtspunten horen bij dit advies.</p>
+      <a class="button secondary" href="/mvp/recommendation?${mvpQueryForInput(input)}">Bekijk uitgebreide adviespreview</a>
+    </section>
+    <section class="band">
+      <a class="button secondary" href="/pakket/huishouden?${query}">Keuzes aanpassen</a>
+      <a class="button" href="/pakket/account?${query}">Doorgaan</a>
+    </section>`,
+  );
+}
+
+function renderPackageAccountPage(input, accountIntent = '') {
+  const query = funnelQueryForInput(input);
+  return renderFunnelShell(
+    'Stap 5 — Gratis account later activeren',
+    'In deze demo wordt nog geen account aangemaakt en niets opgeslagen.',
+    'account',
+    `
+    <section class="band">
+      <div class="section-head">
+        <h2>Waarom later een gratis account handig kan zijn</h2>
+        <span class="pill good">Pitch-only</span>
+      </div>
+      <ul class="action-list">
+        <li>houdbaarheidsdata bijhouden.</li>
+        <li>Herinneringen voor water, voedsel, batterijen en filters.</li>
+        <li>Pakket jaarlijks herzien.</li>
+        <li>Checklist bewaren.</li>
+        <li>Updates ontvangen bij gewijzigde adviezen.</li>
+        <li>Huishouden later aanpassen.</li>
+        <li>Takenlijst beheren.</li>
+      </ul>
+      <p class="subtle">Deze stap is alleen uitleg. Er is geen registratie, geen e-mail, geen wachtwoord en geen opslag.</p>
+    </section>
+    <section class="band">
+      <a class="button secondary" href="/pakket/checkout?${funnelQueryForInput(input, { account_intent: 'guest' })}">Ga verder als gast</a>
+      <a class="button" href="/pakket/checkout?${funnelQueryForInput(input, { account_intent: 'later' })}">Gratis account later activeren</a>
+      ${accountIntent ? `<p class="subtle">Gekozen intentie: ${escapeHtml(accountIntent)}</p>` : ''}
+    </section>
+    <section class="band">
+      <a class="button secondary" href="/pakket/advies?${query}">Terug naar advies</a>
+    </section>`,
+  );
+}
+
+function renderPackageCheckoutPage(data, accountIntent = 'guest') {
+  const input = data.input;
+  const query = funnelQueryForInput(input);
+  const counts = recommendationCounts(data);
+  const allLines = [
+    ...data.sections.core_items,
+    ...data.sections.accessories,
+    ...data.sections.supporting_items,
+    ...data.sections.backup_items,
+    ...data.sections.optional_additions,
+  ];
+  const accountLabel = accountIntent === 'later' ? 'gratis account later activeren' : 'gast';
+  return renderFunnelShell(
+    'Stap 6 — Checkout-preview',
+    'Dit is het einde van de funnelpreview. Er wordt geen bestelling geplaatst.',
+    'checkout',
+    `
+    <section class="band">
+      <div class="section-head">
+        <h2>Checkout-preview</h2>
+        <span class="pill warn">Geen bestelling</span>
+      </div>
+      <p>Deze preview toont hoe een later pakketvoorstel eruit kan zien. Er is geen order, betaling, cart, accountaanmaak of voorraadreservering.</p>
+      <div class="metrics">
+        <div class="metric"><span>Pakketniveau</span><strong>${escapeHtml(tierLabel(input.tier_slug))}</strong></div>
+        <div class="metric"><span>Demo-prijsindicatie</span><strong>${escapeHtml(demoPriceText(input.tier_slug))}</strong></div>
+        <div class="metric"><span>Add-ons</span><strong>${input.addon_slugs.length}</strong></div>
+        <div class="metric"><span>Huishouden</span><strong>${escapeHtml(input.household_adults)} / ${escapeHtml(input.household_children)} / ${escapeHtml(input.household_pets)}</strong></div>
+        <div class="metric"><span>Items</span><strong>${allLines.length}</strong></div>
+        <div class="metric"><span>Taken</span><strong>${counts.tasks}</strong></div>
+        <div class="metric"><span>Aandachtspunten</span><strong>${counts.warnings}</strong></div>
+        <div class="metric"><span>Accountkeuze</span><strong>${escapeHtml(accountLabel)}</strong></div>
+      </div>
+      <p class="subtle">Indicatief en demo: definitieve prijs volgt na product- en leveranciersinvulling.</p>
+    </section>
+    <section class="band">
+      <h2>Samenvatting items</h2>
+      ${renderCompactLineList(allLines, 10)}
+    </section>
+    <section class="band">
+      <h2>Taken/aandachtspunten</h2>
+      <p>${counts.tasks} taken en ${counts.warnings} aandachtspunten blijven onderdeel van je pakketvoorstel.</p>
+    </section>
+    <section class="band">
+      <a class="button secondary" href="/pakket/advies?${query}">Terug naar advies</a>
+      <a class="button secondary" href="/pakket/start?${query}">Keuzes aanpassen</a>
+      <a class="button" href="/mvp/recommendation?${mvpQueryForInput(input)}">Pakketvoorstel later aanvragen</a>
+    </section>`,
+  );
 }
 
 function sectionDescription(key) {
@@ -1257,8 +1628,8 @@ async function handleRequest(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/') {
-      res.writeHead(302, { Location: '/mvp' });
-      res.end();
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderPublicHomePage());
       return;
     }
 
@@ -1292,6 +1663,48 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (url.pathname === '/pakket/start') {
+      const dataInput = funnelInputFromSearchParams(url.searchParams);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderPackageStartPage(dataInput));
+      return;
+    }
+
+    if (url.pathname === '/pakket/addons') {
+      const dataInput = funnelInputFromSearchParams(url.searchParams);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderPackageAddonsPage(dataInput));
+      return;
+    }
+
+    if (url.pathname === '/pakket/huishouden') {
+      const dataInput = funnelInputFromSearchParams(url.searchParams);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderPackageHouseholdPage(dataInput));
+      return;
+    }
+
+    if (url.pathname === '/pakket/advies') {
+      const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderPackageAdvicePage(data));
+      return;
+    }
+
+    if (url.pathname === '/pakket/account') {
+      const dataInput = funnelInputFromSearchParams(url.searchParams);
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderPackageAccountPage(dataInput, url.searchParams.get('account_intent') || ''));
+      return;
+    }
+
+    if (url.pathname === '/pakket/checkout') {
+      const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderPackageCheckoutPage(data, url.searchParams.get('account_intent') || 'guest'));
+      return;
+    }
+
     if (url.pathname !== '/internal/recommendation-poc') {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Not found');
@@ -1320,6 +1733,7 @@ function startServer() {
     console.log(`Internal recommendation POC: http://${HOST}:${PORT}/internal/recommendation-poc`);
     console.log(`Internal backoffice POC: http://${HOST}:${PORT}/internal/backoffice-poc`);
     console.log(`MVP configurator: http://${HOST}:${PORT}/mvp`);
+    console.log(`Public funnel: http://${HOST}:${PORT}/`);
   });
 }
 
@@ -1333,8 +1747,16 @@ module.exports = {
   ensureRecommendationData,
   loadBackofficePocData,
   mvpInputFromSearchParams,
+  funnelInputFromSearchParams,
   renderMvpConfiguratorPage,
   renderMvpRecommendationPage,
+  renderPublicHomePage,
+  renderPackageStartPage,
+  renderPackageAddonsPage,
+  renderPackageHouseholdPage,
+  renderPackageAdvicePage,
+  renderPackageAccountPage,
+  renderPackageCheckoutPage,
   renderBackofficePage,
   handleRequest,
   startServer,

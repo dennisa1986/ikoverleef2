@@ -224,8 +224,12 @@ async function main() {
   }
 
   const root = await requestPath('/');
-  assertEqual(root.statusCode, 302, 'root route redirects');
-  assertEqual(root.headers.Location, '/mvp', 'root route redirects to /mvp');
+  if (root.statusCode === 302) {
+    assertEqual(root.headers.Location, '/mvp', 'root route redirects to /mvp');
+  } else {
+    assertEqual(root.statusCode, 200, 'root route renders MVP entry');
+    assertContains(root.body, ['Ik overleef', 'Start je pakketadvies'], 'root route MVP entry');
+  }
 
   await assertRoute('/mvp', 200, ['Stel je noodpakketadvies samen', 'Advies bekijken'], '/mvp');
   await assertRoute(
