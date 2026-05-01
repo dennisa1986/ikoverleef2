@@ -1,6 +1,12 @@
 # Ik overleef
 
-Ik overleef is een database-first MVP voor uitlegbaar noodpakketadvies. De huidige release candidate bewijst dat backoffice, database, recommendation engine, interne MVP UI en regression suite samen een pakketadvies kunnen maken voor 72 uur voorbereiding.
+Ik overleef is een database-first MVP voor uitlegbaar noodpakketadvies. De huidige release candidate bewijst dat backoffice, database, recommendation engine, interne MVP UI, public funnel, recommendation API en regression suite samen een pakketadvies kunnen maken voor 72 uur voorbereiding.
+
+## Releases
+
+- `v1.0.0-mvp-rc1` — MVP recommendation engine en interne UI.
+- `v1.1.0-commerce-readiness-alpha` — public funnel, checkout-preview, recommendation API, commerce payload API, checklist API en `/pakket/checklist`.
+- `v1.1.1-quality-impulse` — quality- en pre-demo hardening op de v1.1.0-API contracten (debug-gating, health endpoint consistency, JSON formatting, print handler, regression coverage). Geen nieuwe features, geen productlogica-wijzigingen.
 
 ## MVP RC1
 
@@ -15,6 +21,25 @@ Ik overleef is een database-first MVP voor uitlegbaar noodpakketadvies. De huidi
 - reproduceerbare release-gate via regressions.
 
 Dit is nog geen webshop. Checkout, betaling, winkelmand, account, klantprofielopslag en externe leverancierintegraties zijn bewust buiten scope.
+
+## Public funnel en API contracten
+
+Vanaf `v1.1.0-commerce-readiness-alpha` exposeert de POC een publieke funnel en JSON-contracten:
+
+- `/pakket/start`, `/pakket/addons`, `/pakket/huishouden`, `/pakket/advies`, `/pakket/account`, `/pakket/checkout` — public funnel met checkout-preview.
+- `/pakket/checklist` — printvriendelijke checklist op basis van het pakketadvies.
+- `GET /api/health` (canonical) en `GET /health` — zelfde JSON-shape met `status`, `mode`, `commerce_mode`, `checkout_enabled`, `cart_enabled`, `payment_enabled`.
+- `GET /api/recommendation` — publieke recommendation payload (sections, tasks, warnings, summary).
+- `GET /api/recommendation/commerce-payload` — commerce-preview payload met `cart_eligible: false`.
+- `GET /api/recommendation/checklist` — checklist-preview payload.
+
+Belangrijke kaders:
+
+- De checkout-pagina is een **preview shell**, geen echte checkout. Er wordt geen winkelmand, order of betaling aangemaakt.
+- De commerce payload maakt **geen cart of order** aan; `cart_eligible` blijft `false` en er zijn geen `cart_id`, `checkout_url` of `order_id` velden.
+- Shopify is **architectuurrichting**, nog niet gekoppeld. Er zijn geen Shopify API-calls, tokens of variant-ids.
+- Debug-output op publieke API-routes (`?debug=true` of `?internal=true`) is standaard onderdrukt en alleen actief als de environment variable `IOE_ALLOW_PUBLIC_DEBUG=1` (of `POC_PUBLIC_DEBUG=1`) gezet is.
+- JSON-responses zijn standaard compact; pretty-printing alleen via `?pretty=true` in combinatie met de debug env-flag.
 
 ## Architectuur
 
@@ -94,10 +119,16 @@ Belangrijkste routes:
 
 ## Tests
 
-Volledige MVP-gate:
+Volledige MVP-gate (omvat MVP suite, MVP RC, public funnel, public funnel polish, commerce readiness API en quality impulse):
 
 ```bash
 npm run test:all-poc
+```
+
+Snelle quality-gate (commerce readiness + public funnel polish + MVP RC + quality impulse):
+
+```bash
+npm run test:quality-gate
 ```
 
 Alleen RC-check:
@@ -111,6 +142,10 @@ Vanuit `backend/` kan ook elk los script worden gedraaid, bijvoorbeeld:
 ```bash
 npm run test:mvp-rc-poc
 npm run test:demo-readiness-poc
+npm run test:public-funnel-poc
+npm run test:public-funnel-polish-poc
+npm run test:commerce-readiness-poc
+npm run test:quality-impulse-poc
 ```
 
 ## Release discipline

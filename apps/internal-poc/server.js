@@ -225,7 +225,12 @@ function visibleWarningCountLabel(data) {
   return unique === total ? `${unique} uniek` : `${unique} uniek uit ${total} totaal`;
 }
 
+function publicDebugAllowed() {
+  return process.env.IOE_ALLOW_PUBLIC_DEBUG === '1' || process.env.POC_PUBLIC_DEBUG === '1';
+}
+
 function debugEnabled(options = {}) {
+  if (!publicDebugAllowed()) return false;
   return options.debug === true || options.internal === true;
 }
 
@@ -1137,7 +1142,7 @@ function buildRecommendationApiPayload(data, options = {}) {
   };
   if (debugEnabled(options)) {
     payload.debug = {
-      run_id: data.run_id,
+      run_id: data.run?.id,
       qa_summary: data.qa_summary,
     };
   }
@@ -1183,7 +1188,7 @@ function buildCommercePayload(data) {
       commerce_action: 'non_commerce_warning',
       cart_eligible: false,
     })),
-    next_actions: ['download_checklist', 'print_checklist', 'future_shopify_checkout'],
+    next_actions: ['download_checklist', 'print_checklist', 'future_commerce_handoff'],
     disclaimer: 'Preview; er wordt geen winkelmand of checkout aangemaakt.',
   };
 }
@@ -1205,9 +1210,21 @@ function buildChecklistPayload(data) {
   };
 }
 
-function writeJson(res, payload, statusCode = 200) {
+function writeJson(res, payload, statusCode = 200, options = {}) {
   res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload, null, 2));
+  const pretty = options.pretty === true && publicDebugAllowed();
+  res.end(JSON.stringify(payload, null, pretty ? 2 : 0));
+}
+
+function healthPayload() {
+  return {
+    status: 'ok',
+    mode: 'poc',
+    commerce_mode: 'preview',
+    checkout_enabled: false,
+    cart_enabled: false,
+    payment_enabled: false,
+  };
 }
 
 function renderChecklistPage(checklist) {
@@ -1225,8 +1242,14 @@ function renderChecklistPage(checklist) {
     <section class="band">
       <div class="section-head">
         <h2>Checklist</h2>
-        <button class="button" type="button" onclick="window.print()">Print checklist</button>
+        <button class="button" type="button" id="ioe-print-button">Print checklist</button>
       </div>
+      <script>
+        (function () {
+          var btn = document.getElementById('ioe-print-button');
+          if (btn) btn.addEventListener('click', function () { window.print(); });
+        })();
+      </script>
       <div class="metrics">
         <div class="metric"><span>Pakket</span><strong>${escapeHtml(input.package_label)}</strong></div>
         <div class="metric"><span>Niveau</span><strong>${escapeHtml(input.tier_label)}</strong></div>
@@ -1920,20 +1943,8 @@ async function handleRequest(req, res) {
       return;
     }
 
-    if (url.pathname === '/health') {
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ status: 'ok' }));
-      return;
-    }
-
-    if (url.pathname === '/api/health') {
-      writeJson(res, {
-        status: 'ok',
-        mode: 'commerce_readiness_preview',
-        checkout_enabled: false,
-        cart_enabled: false,
-        payment_enabled: false,
-      });
+    if (url.pathname === '/health' || url.pathname === '/api/health') {
+      writeJson(res, healthPayload(), 200, { pretty: url.searchParams.get('pretty') === 'true' });
       return;
     }
 
@@ -1942,19 +1953,19 @@ async function handleRequest(req, res) {
       writeJson(res, buildRecommendationApiPayload(data, {
         debug: url.searchParams.get('debug') === 'true',
         internal: url.searchParams.get('internal') === 'true',
-      }));
+      }), 200, { pretty: url.searchParams.get('pretty') === 'true' });
       return;
     }
 
     if (url.pathname === '/api/recommendation/commerce-payload') {
       const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
-      writeJson(res, buildCommercePayload(data));
+      writeJson(res, buildCommercePayload(data), 200, { pretty: url.searchParams.get('pretty') === 'true' });
       return;
     }
 
     if (url.pathname === '/api/recommendation/checklist') {
       const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
-      writeJson(res, buildChecklistPayload(data));
+      writeJson(res, buildChecklistPayload(data), 200, { pretty: url.searchParams.get('pretty') === 'true' });
       return;
     }
 
