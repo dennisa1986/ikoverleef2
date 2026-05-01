@@ -68,11 +68,11 @@ const MVP_ADDONS = [
   { slug: 'stroomuitval', label: 'Stroomuitval', note: 'Licht, laden en informatie.', group: 'Basiszekerheid' },
   { slug: 'drinkwater', label: 'Drinkwater', note: 'Voorraad en behandeling.', group: 'Basiszekerheid' },
   { slug: 'voedsel_bereiding', label: 'Voedsel & bereiding', note: 'Voedselzekerheid en bereiding.', group: 'Basiszekerheid' },
-  { slug: 'hygiene_sanitatie_afval', label: 'Hygiene, sanitatie & afval', note: 'Reiniging, sanitatie en afval.', group: 'Zorg & huishouden' },
+  { slug: 'hygiene_sanitatie_afval', label: 'Hygiëne, sanitatie & afval', note: 'Reiniging, sanitatie en afval.', group: 'Zorg & huishouden' },
   { slug: 'ehbo_persoonlijke_zorg', label: 'EHBO & persoonlijke zorg', note: 'Wondzorg en persoonlijke zorg.', group: 'Zorg & huishouden' },
   { slug: 'warmte_droog_shelter_light', label: 'Warmte, droog blijven & beschutting-light', note: 'Warmtebehoud en droog blijven.', group: 'Omgeving & verplaatsing' },
   { slug: 'evacuatie', label: 'Evacuatie & documenten', note: 'Dragen, signaleren en documenten.', group: 'Omgeving & verplaatsing' },
-  { slug: 'taken_profielen', label: 'Persoonlijke checks en taken', note: 'Checks naast producten.', group: 'Persoonlijke checks' },
+  { slug: 'taken_profielen', label: 'Persoonlijke checks en taken', note: 'Onderhoud en persoonlijke taken; geen productpakket.', group: 'Persoonlijke checks' },
 ];
 
 const MVP_PRESETS = [
@@ -102,6 +102,31 @@ const DEMO_PRICE_BANDS = {
 };
 
 const FUNNEL_DEFAULT_ADDONS = ['stroomuitval', 'drinkwater', 'evacuatie'];
+
+const PACKAGE_LABELS = {
+  basispakket: 'Basispakket',
+};
+
+const ADDON_LABELS = Object.fromEntries(MVP_ADDONS.map((addon) => [addon.slug, addon.label]));
+
+const TASK_PRIORITY_LABELS = {
+  must: 'Belangrijk',
+  should: 'Aanbevolen',
+  could: 'Optioneel',
+};
+
+const CONSTRAINT_LABELS = {
+  hygiene_contamination_risk: 'Hygiëne',
+  storage_safety: 'Opslag',
+  child_safety: 'Kindveiligheid',
+  dosage_warning: 'Dosering',
+  medical_claim_limit: 'Medische beperking',
+  fire_risk: 'Brandveiligheid',
+  ventilation: 'Ventilatie',
+  indoor_use: 'Binnengebruik',
+  fuel_compatibility: 'Brandstofcompatibiliteit',
+  expiry_sensitive: 'Houdbaarheid',
+};
 
 function parsePositiveInt(value, fallback) {
   if (value === null || value === undefined || value === '') return fallback;
@@ -157,6 +182,51 @@ function sectionTitle(key) {
     case 'optional_additions': return 'Optioneel';
     default: return key;
   }
+}
+
+function packageLabel(packageSlug) {
+  return PACKAGE_LABELS[packageSlug] || 'Basispakket';
+}
+
+function addonLabel(addonSlug) {
+  return ADDON_LABELS[addonSlug] || addonSlug;
+}
+
+function taskPriorityLabel(priority) {
+  return TASK_PRIORITY_LABELS[priority] || 'Aanbevolen';
+}
+
+function constraintLabel(type) {
+  return CONSTRAINT_LABELS[type] || '';
+}
+
+function publicWarningText(warningOrText) {
+  const raw = typeof warningOrText === 'string'
+    ? warningOrText
+    : (warningOrText.public_warning || warningOrText.internal_notes || warningOrText.warning_type || '');
+  const itemTitle = typeof warningOrText === 'object' ? String(warningOrText.item_title || '') : '';
+  let text = String(raw || '').trim();
+  if (/backup\/weak coverage|weak coverage|primary sufficient|not primary sufficient/i.test(text)) {
+    if (/radio|noodradio|zwengel|lamp/i.test(`${itemTitle} ${text}`)) {
+      return 'De zwengel-/lampfunctie van de noodradio is alleen backup en vervangt powerbank of hoofdlamp niet.';
+    }
+    text = text
+      .replace(/backup\/weak coverage/gi, 'backup met beperkte dekking')
+      .replace(/not primary sufficient/gi, 'niet voldoende als hoofdoplossing')
+      .replace(/primary sufficient/gi, 'voldoende als hoofdoplossing')
+      .replace(/weak coverage/gi, 'beperkte dekking');
+  }
+  return text;
+}
+
+function visibleWarningCountLabel(data) {
+  const unique = [...groupedWarnings(data.warnings).values()].reduce((sum, warnings) => sum + warnings.length, 0);
+  const total = data.warnings.length;
+  return unique === total ? `${unique} uniek` : `${unique} uniek uit ${total} totaal`;
+}
+
+function debugEnabled(options = {}) {
+  return options.debug === true || options.internal === true;
 }
 
 async function loadRecommendationData(input) {
@@ -835,12 +905,15 @@ function renderPackageHouseholdPage(input) {
 
 function recommendationCounts(data) {
   const supportCount = data.sections.supporting_items.length + data.sections.backup_items.length + data.sections.optional_additions.length;
+  const uniqueWarnings = [...groupedWarnings(data.warnings).values()].reduce((sum, warnings) => sum + warnings.length, 0);
   return {
     core: data.sections.core_items.length,
     accessories: data.sections.accessories.length,
     support: supportCount,
     tasks: data.tasks.length,
-    warnings: data.warnings.length,
+    warnings: uniqueWarnings,
+    warningsTotal: data.warnings.length,
+    warningsLabel: visibleWarningCountLabel(data),
   };
 }
 
@@ -876,7 +949,7 @@ function renderPackageAdvicePage(data) {
         <div class="metric"><span>Kernitems</span><strong>${counts.core}</strong></div>
         <div class="metric"><span>Accessoires</span><strong>${counts.accessories}</strong></div>
         <div class="metric"><span>Taken</span><strong>${counts.tasks}</strong></div>
-        <div class="metric"><span>Aandachtspunten</span><strong>${counts.warnings}</strong></div>
+        <div class="metric"><span>Aandachtspunten</span><strong>${escapeHtml(counts.warningsLabel)}</strong></div>
       </div>
       <p class="subtle">Prijsindicatie voor demo. Definitieve prijs volgt na product- en leveranciersinvulling. Dit is geen echte order.</p>
     </section>
@@ -894,7 +967,7 @@ function renderPackageAdvicePage(data) {
     </section>
     <section class="band">
       <h2>Taken en aandachtspunten</h2>
-      <p>${counts.tasks} persoonlijke taken en ${counts.warnings} aandachtspunten horen bij dit advies.</p>
+      <p>${counts.tasks} persoonlijke taken en ${escapeHtml(counts.warningsLabel)} aandachtspunten horen bij dit advies.</p>
       <a class="button secondary" href="/mvp/recommendation?${mvpQueryForInput(input)}">Bekijk uitgebreide adviespreview</a>
     </section>
     <section class="band">
@@ -968,7 +1041,7 @@ function renderPackageCheckoutPage(data, accountIntent = 'guest') {
         <div class="metric"><span>Huishouden</span><strong>${escapeHtml(input.household_adults)} / ${escapeHtml(input.household_children)} / ${escapeHtml(input.household_pets)}</strong></div>
         <div class="metric"><span>Items</span><strong>${allLines.length}</strong></div>
         <div class="metric"><span>Taken</span><strong>${counts.tasks}</strong></div>
-        <div class="metric"><span>Aandachtspunten</span><strong>${counts.warnings}</strong></div>
+        <div class="metric"><span>Aandachtspunten</span><strong>${escapeHtml(counts.warningsLabel)}</strong></div>
         <div class="metric"><span>Accountkeuze</span><strong>${escapeHtml(accountLabel)}</strong></div>
       </div>
       <p class="subtle">Indicatief en demo: definitieve prijs volgt na product- en leveranciersinvulling.</p>
@@ -979,7 +1052,7 @@ function renderPackageCheckoutPage(data, accountIntent = 'guest') {
     </section>
     <section class="band">
       <h2>Taken/aandachtspunten</h2>
-      <p>${counts.tasks} taken en ${counts.warnings} aandachtspunten blijven onderdeel van je pakketvoorstel.</p>
+      <p>${counts.tasks} taken en ${escapeHtml(counts.warningsLabel)} aandachtspunten blijven onderdeel van je pakketvoorstel.</p>
     </section>
     <section class="band">
       <a class="button secondary" href="/pakket/advies?${query}">Terug naar advies</a>
@@ -1173,7 +1246,7 @@ function renderMvpItemCard(line, sectionKey) {
           <table>
             <thead><tr><th>Onderwerp</th><th>Waarschuwing</th></tr></thead>
             <tbody>
-              ${line.usage_constraints.map((rule) => `<tr><td>${escapeHtml(rule.constraint_type.replaceAll('_', ' '))}</td><td>${escapeHtml(rule.public_warning)}</td></tr>`).join('')}
+              ${line.usage_constraints.map((rule) => `<tr><td>${escapeHtml(constraintLabel(rule.constraint_type) || 'Aandachtspunt')}</td><td>${escapeHtml(publicWarningText(rule.public_warning))}</td></tr>`).join('')}
             </tbody>
           </table>` : ''}
       </details>
@@ -1226,7 +1299,7 @@ function renderMvpTasks(data) {
         <article class="item-card">
           <h3>${escapeHtml(task.title)}</h3>
           <p>${escapeHtml(task.description_public)}</p>
-          <div class="subtle">${escapeHtml(task.need_slug)} · priority ${escapeHtml(task.priority)}</div>
+          <div class="subtle">${escapeHtml(taskPriorityLabel(task.priority))}</div>
         </article>`).join('') : '<div class="empty">Geen taken voor deze run.</div>'}
     </section>`;
 }
@@ -1241,17 +1314,17 @@ function renderMvpWarnings(data) {
       ${data.warnings.length ? data.warnings.slice(0, 80).map((warning) => `
         <div class="notice" style="margin-top:10px">
           <strong>${escapeHtml(warning.item_title || warning.warning_type)}</strong>
-          <div>${escapeHtml(warning.public_warning || warning.internal_notes || '')}</div>
+          <div>${escapeHtml(publicWarningText(warning))}</div>
         </div>`).join('') : '<div class="empty">Geen warnings voor deze run.</div>'}
     </section>`;
 }
 
 function warningGroupFor(warning) {
   const text = `${warning.warning_type || ''} ${warning.item_title || ''} ${warning.public_warning || ''} ${warning.internal_notes || ''}`.toLowerCase();
+  if (/evacuatie|document|documentenmap|evacuatietas|carrysafe|drycarry|drinkfles|bottle|fluit|reflect|tas|sleutel|cash|contact/.test(text)) return 'Evacuatie & documenten';
   if (/water|drink|voedsel|food|koel|houdbaar|filter|jerrycan/.test(text)) return 'Water & voedselveiligheid';
   if (/gas|vuur|brand|hitte|ventilatie|koken|verwarmen|fornuis|lighter|ontsteking/.test(text)) return 'Vuur, gas & gebruiksveiligheid';
   if (/ehbo|medisch|wond|handschoen|infect|thermometer|medicatie|pijn/.test(text)) return 'Medisch & EHBO';
-  if (/evacuatie|document|fluit|reflect|tas|sleutel|cash|contact/.test(text)) return 'Evacuatie & documenten';
   if (/opslag|houdbaar|expiry|kind|droog|koel|bewaar/.test(text)) return 'Opslag & houdbaarheid';
   return 'Persoonlijke checks';
 }
@@ -1260,7 +1333,7 @@ function groupedWarnings(warnings) {
   const deduped = [];
   const seen = new Set();
   for (const warning of warnings) {
-    const key = String(warning.public_warning || warning.internal_notes || warning.warning_type || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const key = publicWarningText(warning).toLowerCase().replace(/\s+/g, ' ').trim();
     if (!key || seen.has(key)) continue;
     seen.add(key);
     deduped.push({ ...warning, group: warningGroupFor(warning) });
@@ -1276,6 +1349,7 @@ function renderGroupedMvpWarnings(data) {
   const grouped = groupedWarnings(data.warnings);
   const groups = [...grouped.entries()];
   const total = groups.reduce((sum, [, warnings]) => sum + warnings.length, 0);
+  const countLabel = visibleWarningCountLabel(data);
   return `
     <section class="band">
       <div class="section-head">
@@ -1283,7 +1357,7 @@ function renderGroupedMvpWarnings(data) {
           <h2>Aandachtspunten</h2>
           <div class="subtle">Belangrijke waarschuwingen, gegroepeerd en ontdubbeld.</div>
         </div>
-        <span class="pill ${total ? 'warn' : 'good'}">${total}</span>
+        <span class="pill ${total ? 'warn' : 'good'}">${escapeHtml(countLabel)}</span>
       </div>
       ${groups.length ? groups.map(([group, warnings]) => `
         <div style="margin-top:14px">
@@ -1291,37 +1365,43 @@ function renderGroupedMvpWarnings(data) {
           ${warnings.slice(0, 2).map((warning) => `
             <div class="notice" style="margin-top:10px">
               <strong>${escapeHtml(warning.item_title || group)}</strong>
-              <div>${escapeHtml(warning.public_warning || warning.internal_notes || '')}</div>
+              <div>${escapeHtml(publicWarningText(warning))}</div>
             </div>`).join('')}
           ${warnings.length > 2 ? `<details><summary>Toon meer aandachtspunten (${warnings.length - 2})</summary>${warnings.slice(2).map((warning) => `
             <div class="notice" style="margin-top:10px">
               <strong>${escapeHtml(warning.item_title || group)}</strong>
-              <div>${escapeHtml(warning.public_warning || warning.internal_notes || '')}</div>
+              <div>${escapeHtml(publicWarningText(warning))}</div>
             </div>`).join('')}</details>` : ''}
         </div>`).join('') : '<div class="empty">Geen aandachtspunten voor deze run.</div>'}
     </section>`;
 }
 
-function renderNextSteps() {
+function renderNextSteps(options = {}) {
+  const debugLink = debugEnabled(options)
+    ? '<li><a href="/internal/recommendation-poc">Bekijk interne onderbouwing</a> voor test en review.</li>'
+    : '';
   return `
     <section class="band">
       <div class="section-head">
         <h2>Wat kun je nu doen?</h2>
         <span class="pill good">Volgende stap</span>
       </div>
+      <p class="subtle">Print of bewaar deze checklist, gebruik hem als boodschappenlijst of bespreek hem met je huishouden.</p>
       <ul class="action-list">
-        <li>Print of bewaar deze checklist.</li>
+        <li><button class="button secondary" type="button" onclick="window.print()">Print checklist</button></li>
+        <li>Bewaar deze checklist voor later.</li>
         <li>Gebruik dit als boodschappenlijst.</li>
         <li>Bespreek dit advies met je huishouden.</li>
         <li>Vraag later een pakketvoorstel aan. In deze demo wordt niets opgeslagen of verzonden.</li>
-        <li><a href="/internal/recommendation-poc">Bekijk interne onderbouwing</a> voor test en review.</li>
+        ${debugLink}
       </ul>
       <p class="subtle">Prijs en gewicht volgen in de commerciele pakketfase.</p>
     </section>`;
 }
 
-function renderMvpRecommendationPage(data) {
+function renderMvpRecommendationPage(data, options = {}) {
   const query = mvpQueryForInput(data.input);
+  const warningCountLabel = visibleWarningCountLabel(data);
   const counts = {
     core: data.sections.core_items.length,
     accessories: data.sections.accessories.length,
@@ -1329,7 +1409,7 @@ function renderMvpRecommendationPage(data) {
     backup: data.sections.backup_items.length,
     optional: data.sections.optional_additions.length,
     tasks: data.tasks.length,
-    warnings: data.warnings.length,
+    warnings: warningCountLabel,
   };
 
   return `<!doctype html>
@@ -1356,11 +1436,11 @@ function renderMvpRecommendationPage(data) {
     <section class="band">
       <div class="section-head">
         <h2>Jouw keuzes</h2>
-        <span class="pill good">${escapeHtml(data.qa_summary.status === 'clean' ? 'controle zonder blokkades' : 'controle vraagt aandacht')}</span>
+        <span class="pill good">${escapeHtml(data.qa_summary.status === 'clean' ? 'Advies opgehaald' : 'Advies vraagt aandacht')}</span>
       </div>
       <div class="metrics">
-        <div class="metric"><span>Pakket</span><strong>${escapeHtml(data.input.package_slug)}</strong></div>
-        <div class="metric"><span>Niveau</span><strong>${escapeHtml(data.input.tier_slug)}</strong></div>
+        <div class="metric"><span>Pakket</span><strong>${escapeHtml(packageLabel(data.input.package_slug))}</strong></div>
+        <div class="metric"><span>Niveau</span><strong>${escapeHtml(tierLabel(data.input.tier_slug))}</strong></div>
         <div class="metric"><span>Add-ons</span><strong>${data.input.addon_slugs.length}</strong></div>
         <div class="metric"><span>Volwassenen</span><strong>${escapeHtml(data.input.household_adults)}</strong></div>
         <div class="metric"><span>Kinderen</span><strong>${escapeHtml(data.input.household_children)}</strong></div>
@@ -1371,10 +1451,10 @@ function renderMvpRecommendationPage(data) {
         <div class="metric"><span>Ondersteunend</span><strong>${counts.supporting}</strong></div>
         <div class="metric"><span>Backup</span><strong>${counts.backup}</strong></div>
         <div class="metric"><span>Taken</span><strong>${counts.tasks}</strong></div>
-        <div class="metric"><span>Aandachtspunten</span><strong>${counts.warnings}</strong></div>
+        <div class="metric"><span>Aandachtspunten</span><strong>${escapeHtml(counts.warnings)}</strong></div>
       </div>
       <div style="margin-top:12px">
-        ${data.input.addon_slugs.map((slug) => `<span class="pill good">${escapeHtml(slug)}</span>`).join('')}
+        ${data.input.addon_slugs.map((slug) => `<span class="pill good">${escapeHtml(addonLabel(slug))}</span>`).join('')}
       </div>
       <div style="margin-top:16px"><a class="button secondary" href="/mvp?${query}">Keuzes aanpassen</a></div>
     </section>
@@ -1384,7 +1464,7 @@ function renderMvpRecommendationPage(data) {
     ${renderMvpCombinedSupportSection(data)}
     ${renderMvpTasks(data)}
     ${renderGroupedMvpWarnings(data)}
-    ${renderNextSteps()}
+    ${renderNextSteps(options)}
   </main>
 </body>
 </html>`;
@@ -1659,7 +1739,10 @@ async function handleRequest(req, res) {
     if (url.pathname === '/mvp/recommendation') {
       const data = await ensureRecommendationData(mvpInputFromSearchParams(url.searchParams));
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(renderMvpRecommendationPage(data));
+      res.end(renderMvpRecommendationPage(data, {
+        debug: url.searchParams.get('debug') === 'true',
+        internal: url.searchParams.get('internal') === 'true',
+      }));
       return;
     }
 
