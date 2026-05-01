@@ -21,7 +21,8 @@
     "test:demo-readiness-poc": "node regression_demo_readiness_poc.js",
     "test:end-user-framing-poc": "node regression_end_user_framing_poc.js",
     "test:public-funnel-poc": "node regression_public_funnel_checkout_shell_poc.js",
-    "test:public-funnel-polish-poc": "node regression_public_funnel_polish_poc.js"
+    "test:public-funnel-polish-poc": "node regression_public_funnel_polish_poc.js",
+    "test:commerce-readiness-poc": "node regression_commerce_readiness_api_checklist_poc.js"
   },
   "dependencies": {
     "pg": "^8.13.0"

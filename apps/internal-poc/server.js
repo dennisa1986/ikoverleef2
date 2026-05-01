@@ -972,6 +972,7 @@ function renderPackageAdvicePage(data) {
     </section>
     <section class="band">
       <a class="button secondary" href="/pakket/huishouden?${query}">Keuzes aanpassen</a>
+      <a class="button secondary" href="/pakket/checklist?${query}">Open checklist</a>
       <a class="button" href="/pakket/account?${query}">Doorgaan</a>
     </section>`,
   );
@@ -1057,7 +1058,213 @@ function renderPackageCheckoutPage(data, accountIntent = 'guest') {
     <section class="band">
       <a class="button secondary" href="/pakket/advies?${query}">Terug naar advies</a>
       <a class="button secondary" href="/pakket/start?${query}">Keuzes aanpassen</a>
+      <a class="button secondary" href="/pakket/checklist?${query}">Print checklist</a>
       <a class="button" href="/mvp/recommendation?${mvpQueryForInput(input)}">Pakketvoorstel later aanvragen</a>
+    </section>`,
+  );
+}
+
+function sectionEntries(data) {
+  return Object.entries(data.sections).flatMap(([section, lines]) => (
+    (lines || []).map((line) => ({ section, line }))
+  ));
+}
+
+function publicLine(line, section) {
+  return {
+    sku: line.sku,
+    title: line.title,
+    quantity: line.quantity,
+    section,
+    section_label: sectionTitle(section),
+    role: line.runtime_role,
+    explanation: line.explanation_public || '',
+  };
+}
+
+function publicTask(task) {
+  return {
+    title: task.title,
+    description: task.description_public || '',
+    priority_label: taskPriorityLabel(task.priority),
+  };
+}
+
+function publicWarnings(data) {
+  return [...groupedWarnings(data.warnings).entries()].flatMap(([group, warnings]) => (
+    warnings.map((warning) => ({
+      group,
+      item_title: warning.item_title || '',
+      warning: publicWarningText(warning),
+    }))
+  ));
+}
+
+function publicInput(input) {
+  return {
+    package_slug: input.package_slug,
+    package_label: packageLabel(input.package_slug),
+    tier_slug: input.tier_slug,
+    tier_label: tierLabel(input.tier_slug),
+    addon_slugs: input.addon_slugs,
+    addon_labels: input.addon_slugs.map(addonLabel),
+    household_adults: input.household_adults,
+    household_children: input.household_children,
+    household_pets: input.household_pets,
+    duration_hours: input.duration_hours,
+  };
+}
+
+function buildRecommendationApiPayload(data, options = {}) {
+  const sections = Object.fromEntries(Object.entries(data.sections).map(([section, lines]) => [
+    section,
+    (lines || []).map((line) => publicLine(line, section)),
+  ]));
+  const itemCount = Object.values(sections).reduce((sum, lines) => sum + lines.length, 0);
+  const payload = {
+    mode: 'preview',
+    input: publicInput(data.input),
+    sections,
+    tasks: data.tasks.map(publicTask),
+    warnings: publicWarnings(data),
+    summary: {
+      item_count: itemCount,
+      task_count: data.tasks.length,
+      warning_count_label: visibleWarningCountLabel(data),
+      qa_status: data.qa_summary.blocking_total === 0 ? 'clean' : 'attention',
+    },
+    disclaimer: 'Preview; nog geen definitieve verkoopvoorraad of checkout.',
+  };
+  if (debugEnabled(options)) {
+    payload.debug = {
+      run_id: data.run_id,
+      qa_summary: data.qa_summary,
+    };
+  }
+  return payload;
+}
+
+function buildCommercePayload(data) {
+  const tier = DEMO_PRICE_BANDS[data.input.tier_slug] || DEMO_PRICE_BANDS.basis_plus;
+  return {
+    commerce_mode: 'preview',
+    commerce_provider_target: 'shopify_headless_future',
+    cart_eligible: false,
+    package: {
+      slug: data.input.package_slug,
+      label: packageLabel(data.input.package_slug),
+      tier_slug: data.input.tier_slug,
+      tier_label: tierLabel(data.input.tier_slug),
+    },
+    pricing: {
+      status: 'indicative_demo',
+      display: demoPriceText(data.input.tier_slug),
+      demo_from_price: tier.demoFromPrice,
+      is_final: false,
+    },
+    lines: sectionEntries(data).map(({ section, line }) => ({
+      sku: line.sku,
+      title: line.title,
+      quantity: line.quantity,
+      section,
+      role: line.runtime_role,
+      commerce_action: 'own_stock_candidate',
+      cart_eligible: false,
+      shopify_variant_id: null,
+      reason: line.explanation_public || 'Nog geen definitieve verkoopvoorraad of Shopify-koppeling.',
+    })),
+    tasks: data.tasks.map((task) => ({
+      ...publicTask(task),
+      commerce_action: 'task_only',
+      cart_eligible: false,
+    })),
+    warnings: publicWarnings(data).map((warning) => ({
+      ...warning,
+      commerce_action: 'non_commerce_warning',
+      cart_eligible: false,
+    })),
+    next_actions: ['download_checklist', 'print_checklist', 'future_shopify_checkout'],
+    disclaimer: 'Preview; er wordt geen winkelmand of checkout aangemaakt.',
+  };
+}
+
+function buildChecklistPayload(data) {
+  return {
+    mode: 'checklist_preview',
+    generated_at: new Date().toISOString(),
+    input: publicInput(data.input),
+    items: sectionEntries(data).map(({ section, line }) => ({
+      title: line.title,
+      quantity: line.quantity,
+      section: sectionTitle(section),
+      note: line.explanation_public || '',
+    })),
+    tasks: data.tasks.map(publicTask),
+    warnings: publicWarnings(data),
+    disclaimer: 'Checklist-preview; geen bestelling.',
+  };
+}
+
+function writeJson(res, payload, statusCode = 200) {
+  res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(payload, null, 2));
+}
+
+function renderChecklistPage(checklist) {
+  const input = checklist.input;
+  const groupedItems = checklist.items.reduce((map, item) => {
+    if (!map.has(item.section)) map.set(item.section, []);
+    map.get(item.section).push(item);
+    return map;
+  }, new Map());
+  return renderFunnelShell(
+    'Printvriendelijke checklist',
+    'Checklist-preview op basis van je pakketadvies. Er wordt niets opgeslagen of besteld.',
+    '',
+    `
+    <section class="band">
+      <div class="section-head">
+        <h2>Checklist</h2>
+        <button class="button" type="button" onclick="window.print()">Print checklist</button>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>Pakket</span><strong>${escapeHtml(input.package_label)}</strong></div>
+        <div class="metric"><span>Niveau</span><strong>${escapeHtml(input.tier_label)}</strong></div>
+        <div class="metric"><span>Add-ons</span><strong>${escapeHtml(input.addon_labels.join(', '))}</strong></div>
+        <div class="metric"><span>Huishouden</span><strong>${escapeHtml(input.household_adults)} / ${escapeHtml(input.household_children)} / ${escapeHtml(input.household_pets)}</strong></div>
+        <div class="metric"><span>Duur</span><strong>${escapeHtml(input.duration_hours)}u</strong></div>
+        <div class="metric"><span>Gegenereerd</span><strong>${escapeHtml(new Date(checklist.generated_at).toLocaleDateString('nl-NL'))}</strong></div>
+      </div>
+      <p class="subtle">${escapeHtml(checklist.disclaimer)}</p>
+    </section>
+    ${[...groupedItems.entries()].map(([section, items]) => `
+      <section class="band">
+        <div class="section-head"><h2>${escapeHtml(section)}</h2><span class="pill good">${items.length}</span></div>
+        <table>
+          <thead><tr><th>Check</th><th class="num">Aantal</th><th>Notitie</th></tr></thead>
+          <tbody>
+            ${items.map((item) => `<tr><td>${escapeHtml(item.title)}</td><td class="num">${escapeHtml(item.quantity)}</td><td>${escapeHtml(item.note)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </section>`).join('')}
+    <section class="band">
+      <div class="section-head"><h2>Taken</h2><span class="pill">${checklist.tasks.length}</span></div>
+      ${checklist.tasks.length ? `<ul>${checklist.tasks.map((task) => `<li><strong>${escapeHtml(task.priority_label)}:</strong> ${escapeHtml(task.title)} — ${escapeHtml(task.description)}</li>`).join('')}</ul>` : '<div class="empty">Geen taken.</div>'}
+    </section>
+    <section class="band">
+      <div class="section-head"><h2>Aandachtspunten</h2><span class="pill warn">${checklist.warnings.length}</span></div>
+      ${checklist.warnings.length ? checklist.warnings.map((warning) => `<div class="notice" style="margin-top:10px"><strong>${escapeHtml(warning.group)}</strong><div>${escapeHtml(warning.warning)}</div></div>`).join('') : '<div class="empty">Geen aandachtspunten.</div>'}
+    </section>
+    <section class="band">
+      <a class="button secondary" href="/pakket/advies?${funnelQueryForInput({
+        package_slug: input.package_slug,
+        tier_slug: input.tier_slug,
+        addon_slugs: input.addon_slugs,
+        household_adults: input.household_adults,
+        household_children: input.household_children,
+        household_pets: input.household_pets,
+        duration_hours: input.duration_hours,
+      })}">Terug naar advies</a>
     </section>`,
   );
 }
@@ -1719,6 +1926,38 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (url.pathname === '/api/health') {
+      writeJson(res, {
+        status: 'ok',
+        mode: 'commerce_readiness_preview',
+        checkout_enabled: false,
+        cart_enabled: false,
+        payment_enabled: false,
+      });
+      return;
+    }
+
+    if (url.pathname === '/api/recommendation') {
+      const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
+      writeJson(res, buildRecommendationApiPayload(data, {
+        debug: url.searchParams.get('debug') === 'true',
+        internal: url.searchParams.get('internal') === 'true',
+      }));
+      return;
+    }
+
+    if (url.pathname === '/api/recommendation/commerce-payload') {
+      const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
+      writeJson(res, buildCommercePayload(data));
+      return;
+    }
+
+    if (url.pathname === '/api/recommendation/checklist') {
+      const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
+      writeJson(res, buildChecklistPayload(data));
+      return;
+    }
+
     if (url.pathname === '/internal/backoffice-poc') {
       const allowedDomains = new Set(['all', 'qa', 'readiness', 'governance', 'scenarios']);
       const domainParam = url.searchParams.get('domain') || 'all';
@@ -1788,6 +2027,13 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (url.pathname === '/pakket/checklist') {
+      const data = await ensureRecommendationData(funnelInputFromSearchParams(url.searchParams));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(renderChecklistPage(buildChecklistPayload(data)));
+      return;
+    }
+
     if (url.pathname !== '/internal/recommendation-poc') {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Not found');
@@ -1840,6 +2086,10 @@ module.exports = {
   renderPackageAdvicePage,
   renderPackageAccountPage,
   renderPackageCheckoutPage,
+  buildRecommendationApiPayload,
+  buildCommercePayload,
+  buildChecklistPayload,
+  renderChecklistPage,
   renderBackofficePage,
   handleRequest,
   startServer,
